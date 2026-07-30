@@ -16,6 +16,11 @@ void Dosing::init() {
 
 void Dosing::loop() {
   for (uint8_t i = 0; i < PUMP_COUNT; i++) {
+    // reset Complete/Error back to Idle so dashboard shows current state
+    if (_jobs[i].state == DoseState::Complete || _jobs[i].state == DoseState::Error) {
+      _jobs[i].state = DoseState::Idle;
+      continue;
+    }
     if (_jobs[i].state != DoseState::Dosing) continue;
 
     PumpConfig* cfg = Pump::getConfig(_jobs[i].pumpIndex);

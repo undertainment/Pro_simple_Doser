@@ -269,10 +269,11 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
 .pump-name-input:focus{outline:none}
 /* Badges */
 .badge{display:inline-block;padding:2px 10px;border-radius:4px;font-size:.65rem;font-weight:600}
-.badge.active{background:rgba(16,185,129,.1);color:var(--green);border:1px solid rgba(16,185,129,.2)}
 .badge.idle{background:rgba(75,85,99,.15);color:var(--text3);border:1px solid rgba(75,85,99,.2)}
+.badge.priming{background:rgba(245,158,11,.1);color:#f59e0b;border:1px solid rgba(245,158,11,.2)}
+.badge.dosing{background:rgba(59,130,246,.1);color:var(--blue);border:1px solid rgba(59,130,246,.2)}
+.badge.complete{background:rgba(16,185,129,.1);color:var(--green);border:1px solid rgba(16,185,129,.2)}
 .badge.error{background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.2)}
-.badge.progress{background:rgba(59,130,246,.1);color:var(--blue);border:1px solid rgba(59,130,246,.2)}
 /* Toggle switch */
 .toggle-sm{
   position:relative;width:32px;height:18px;display:inline-block;cursor:pointer;
