@@ -18,7 +18,7 @@ struct StorageBlock {
   StorageHeader header;
   PumpConfig    pumps[PUMP_COUNT];
   Schedule      schedules[MAX_SCHEDULES];
-  ApexConfig    apex;
+  ApexConfig    apex[APEX_UNIT_COUNT];
 };
 
 bool Storage::_dirty = false;
@@ -33,7 +33,7 @@ void Storage::save() {
   StorageBlock block;
   memset(&block, 0, sizeof(block));
   block.header.magic    = MAGIC;
-  block.header.version  = 2;
+  block.header.version  = 3;
   block.header.scheduleCount = Scheduler::scheduleCount();
 
   for (uint8_t i = 0; i < PUMP_COUNT; i++) {
@@ -46,7 +46,9 @@ void Storage::save() {
     if (s) block.schedules[i] = *s;
   }
 
-  block.apex = Apex::getConfig();
+  for (uint8_t u = 0; u < APEX_UNIT_COUNT; u++) {
+    block.apex[u] = Apex::getConfig(u);
+  }
 
   block.header.crc = _crc16((uint8_t*)&block.pumps, sizeof(block) - sizeof(StorageHeader));
   EEPROM.put(0, block);
@@ -79,8 +81,10 @@ void Storage::load() {
     Scheduler::addSchedule(block.schedules[i]);
   }
 
-  if (block.header.version >= 2) {
-    Apex::setConfig(block.apex);
+  if (block.header.version >= 3) {
+    for (uint8_t u = 0; u < APEX_UNIT_COUNT; u++) {
+      Apex::setConfig(u, block.apex[u]);
+    }
   }
 
   Logger::info(String(F("Settings loaded (")) + block.header.scheduleCount + F(" schedules)"));
@@ -124,12 +128,12 @@ void Storage::setScheduleCount(uint8_t count) {
   // used after loading only
 }
 
-void Storage::getApexConfig(ApexConfig& cfg) {
-  cfg = Apex::getConfig();
+void Storage::getApexConfig(uint8_t unit, ApexConfig& cfg) {
+  cfg = Apex::getConfig(unit);
 }
 
-void Storage::setApexConfig(const ApexConfig& cfg) {
-  Apex::setConfig(cfg);
+void Storage::setApexConfig(uint8_t unit, const ApexConfig& cfg) {
+  Apex::setConfig(unit, cfg);
   _dirty = true;
 }
 

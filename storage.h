@@ -20,8 +20,8 @@ public:
   static void setSchedule(uint8_t index, const Schedule& sched);
   static void setScheduleCount(uint8_t count);
 
-  static void getApexConfig(ApexConfig& cfg);
-  static void setApexConfig(const ApexConfig& cfg);
+  static void getApexConfig(uint8_t unit, ApexConfig& cfg);
+  static void setApexConfig(uint8_t unit, const ApexConfig& cfg);
 
 private:
   static bool _dirty;

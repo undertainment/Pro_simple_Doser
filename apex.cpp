@@ -2,58 +2,59 @@
 #include "logger.h"
 #include <WiFi.h>
 
-ApexConfig Apex::_config;
-ApexProbe Apex::_probes[APEX_MAX_PROBES];
-uint8_t Apex::_probeCount = 0;
-unsigned long Apex::_lastUpdate = 0;
-unsigned long Apex::_lastPoll = 0;
-bool Apex::_connected = false;
+Apex::UnitState Apex::_units[APEX_UNIT_COUNT];
 
 void Apex::init() {
-  _config.port = 80;
-  _config.enabled = false;
-  _config.ip[0] = '\0';
-  strcpy(_config.username, "admin");
-  _config.password[0] = '\0';
-  _probeCount = 0;
-  _lastUpdate = 0;
-  _lastPoll = -APEX_POLL_INTERVAL_MS;
-  Logger::info(F("Apex Classic client initialized"));
+  for (uint8_t u = 0; u < APEX_UNIT_COUNT; u++) {
+    _units[u].config.port = 80;
+    _units[u].config.enabled = false;
+    _units[u].config.ip[0] = '\0';
+    strcpy(_units[u].config.username, "admin");
+    _units[u].config.password[0] = '\0';
+    _units[u].probeCount = 0;
+    _units[u].lastUpdate = 0;
+    _units[u].lastPoll = -APEX_POLL_INTERVAL_MS;
+    _units[u].connected = false;
+  }
+  Logger::info(F("Apex Classic: 2-unit client initialized"));
 }
 
 void Apex::loop() {
-  if (!_config.enabled || _config.ip[0] == '\0') return;
   unsigned long now = millis();
-  if (now - _lastPoll < APEX_POLL_INTERVAL_MS) return;
-  _lastPoll = now;
-  _poll();
+  for (uint8_t u = 0; u < APEX_UNIT_COUNT; u++) {
+    UnitState& unit = _units[u];
+    if (!unit.config.enabled || unit.config.ip[0] == '\0') continue;
+    if (now - unit.lastPoll < APEX_POLL_INTERVAL_MS) continue;
+    unit.lastPoll = now;
+    _poll(u);
+  }
 }
 
-void Apex::setConfig(const ApexConfig& cfg) {
-  _config = cfg;
+void Apex::setConfig(uint8_t unit, const ApexConfig& cfg) {
+  if (unit < APEX_UNIT_COUNT) _units[unit].config = cfg;
 }
 
-const ApexConfig& Apex::getConfig() {
-  return _config;
+const ApexConfig& Apex::getConfig(uint8_t unit) {
+  return _units[unit < APEX_UNIT_COUNT ? unit : 0].config;
 }
 
-bool Apex::isConnected() {
-  return _connected;
+bool Apex::isConnected(uint8_t unit) {
+  return unit < APEX_UNIT_COUNT ? _units[unit].connected : false;
 }
 
-unsigned long Apex::lastUpdate() {
-  return _lastUpdate;
+unsigned long Apex::lastUpdate(uint8_t unit) {
+  return unit < APEX_UNIT_COUNT ? _units[unit].lastUpdate : 0;
 }
 
-const ApexProbe* Apex::getProbes() {
-  return _probes;
+const ApexProbe* Apex::getProbes(uint8_t unit) {
+  return unit < APEX_UNIT_COUNT ? _units[unit].probes : nullptr;
 }
 
-uint8_t Apex::probeCount() {
-  return _probeCount;
+uint8_t Apex::probeCount(uint8_t unit) {
+  return unit < APEX_UNIT_COUNT ? _units[unit].probeCount : 0;
 }
 
-// ── base64 ───────────────────────────────────────────
+// ── helpers ──────────────────────────────────────────
 
 static const char _b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -84,16 +85,17 @@ static int _readResponse(WiFiClient& c, String& out, unsigned long timeoutMs) {
 
 // ── poll ─────────────────────────────────────────────
 
-void Apex::_poll() {
+void Apex::_poll(uint8_t unitIdx) {
+  UnitState& unit = _units[unitIdx];
   WiFiClient client;
   String path = "/cgi-bin/status.xml";
-  String host = String(_config.ip);
-  String auth = String(_config.username) + ":" + String(_config.password);
+  String host = String(unit.config.ip);
+  String auth = String(unit.config.username) + ":" + String(unit.config.password);
   String authB64 = _base64Encode((const uint8_t*)auth.c_str(), auth.length());
 
-  if (!client.connect(_config.ip, _config.port, APEX_TIMEOUT_MS)) {
-    _connected = false;
-    Logger::warn(F("Apex: connection failed"));
+  if (!client.connect(unit.config.ip, unit.config.port, APEX_TIMEOUT_MS)) {
+    unit.connected = false;
+    Logger::warn(String(F("Apex ")) + unitIdx + F(": connection failed"));
     return;
   }
 
@@ -108,33 +110,32 @@ void Apex::_poll() {
   client.stop();
 
   if (resp.length() == 0) {
-    _connected = false;
-    Logger::warn(F("Apex: empty response"));
+    unit.connected = false;
+    Logger::warn(String(F("Apex ")) + unitIdx + F(": empty response"));
     return;
   }
 
   int spaceIdx = resp.indexOf(' ');
-  if (spaceIdx < 0) { _connected = false; return; }
+  if (spaceIdx < 0) { unit.connected = false; return; }
   String statusCode = resp.substring(spaceIdx + 1, spaceIdx + 4);
 
   if (statusCode != "200") {
-    Logger::warn(String(F("Apex: HTTP ")) + statusCode);
-    _connected = false;
+    Logger::warn(String(F("Apex ")) + unitIdx + F(": HTTP ") + statusCode);
+    unit.connected = false;
     return;
   }
 
-  // --- extract body ---
   int bodyStart = resp.indexOf("\r\n\r\n");
   if (bodyStart < 0) bodyStart = resp.indexOf("\n\n");
-  if (bodyStart < 0) { _connected = false; return; }
+  if (bodyStart < 0) { unit.connected = false; return; }
   bodyStart += (resp[bodyStart + 1] == '\n' ? 2 : 4);
   String body = resp.substring(bodyStart);
   body.trim();
 
-  // --- parse XML probes ---
-  _probeCount = 0;
+  // parse XML probes
+  unit.probeCount = 0;
   int pos = 0;
-  while (_probeCount < APEX_MAX_PROBES) {
+  while (unit.probeCount < APEX_MAX_PROBES) {
     int ps = body.indexOf("<probe>", pos);
     if (ps < 0) break;
     int pe = body.indexOf("</probe>", ps);
@@ -159,7 +160,7 @@ void Apex::_poll() {
     String pval = block.substring(vi, ve);
     pval.trim();
 
-    ApexProbe& probe = _probes[_probeCount];
+    ApexProbe& probe = unit.probes[unit.probeCount];
     strncpy(probe.name, pname.c_str(), sizeof(probe.name) - 1);
     probe.name[sizeof(probe.name) - 1] = '\0';
     probe.value = pval.toFloat();
@@ -174,15 +175,15 @@ void Apex::_poll() {
     else if (pname == "Mg" || pname == "Magnesium") strcpy(probe.label, "Magnesium");
     else strncpy(probe.label, pname.c_str(), sizeof(probe.label) - 1);
 
-    _probeCount++;
+    unit.probeCount++;
   }
 
-  _connected = (_probeCount > 0);
-  _lastUpdate = millis();
+  unit.connected = (unit.probeCount > 0);
+  unit.lastUpdate = millis();
 
-  if (_probeCount > 0) {
-    Logger::info(String(F("Apex Classic: ")) + _probeCount + F(" probes OK"));
+  if (unit.probeCount > 0) {
+    Logger::info(String(F("Apex ")) + unitIdx + F(": ") + unit.probeCount + F(" probes OK"));
   } else {
-    Logger::warn(F("Apex Classic: no <probe> elements found"));
+    Logger::warn(String(F("Apex ")) + unitIdx + F(": no <probe> elements found"));
   }
 }

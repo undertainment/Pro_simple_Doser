@@ -102,19 +102,23 @@ String Dashboard::renderLogJSON() {
 }
 
 String Dashboard::renderApexJSON() {
-  String json = F("{\"enabled\":");
-  json += String(Apex::getConfig().enabled ? F("true") : F("false")) + F(",");
-  json += String(F("\"connected\":")) + String(Apex::isConnected() ? F("true") : F("false")) + F(",");
-  json += String(F("\"lastUpdate\":")) + String(Apex::lastUpdate()) + F(",");
-  json += String(F("\"ip\":\"")) + String(Apex::getConfig().ip) + F("\",");
-  json += String(F("\"probes\":["));
-  for (uint8_t i = 0; i < Apex::probeCount(); i++) {
-    const ApexProbe* p = Apex::getProbes();
-    if (!p) break;
-    if (i > 0) json += F(",");
-    json += String(F("{\"name\":\"")) + _jsonEscape(String(p[i].name)) + F("\",");
-    json += String(F("\"value\":")) + String(p[i].value, 2) + F(",");
-    json += String(F("\"label\":\"")) + _jsonEscape(String(p[i].label)) + F("\"}");
+  String json = F("{\"units\":[");
+  for (uint8_t u = 0; u < APEX_UNIT_COUNT; u++) {
+    if (u > 0) json += F(",");
+    json += String(F("{\"ip\":\"")) + String(Apex::getConfig(u).ip) + F("\",");
+    json += String(F("\"enabled\":")) + String(Apex::getConfig(u).enabled ? F("true") : F("false")) + F(",");
+    json += String(F("\"connected\":")) + String(Apex::isConnected(u) ? F("true") : F("false")) + F(",");
+    json += String(F("\"lastUpdate\":")) + String(Apex::lastUpdate(u)) + F(",");
+    json += String(F("\"probes\":["));
+    for (uint8_t i = 0; i < Apex::probeCount(u); i++) {
+      const ApexProbe* p = Apex::getProbes(u);
+      if (!p) break;
+      if (i > 0) json += F(",");
+      json += String(F("{\"name\":\"")) + _jsonEscape(String(p[i].name)) + F("\",");
+      json += String(F("\"value\":")) + String(p[i].value, 2) + F(",");
+      json += String(F("\"label\":\"")) + _jsonEscape(String(p[i].label)) + F("\"}");
+    }
+    json += F("]}");
   }
   json += F("]}");
   return json;

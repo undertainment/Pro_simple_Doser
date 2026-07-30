@@ -10,23 +10,27 @@ public:
   static void init();
   static void loop();
 
-  static void setConfig(const ApexConfig& cfg);
-  static const ApexConfig& getConfig();
+  static void setConfig(uint8_t unit, const ApexConfig& cfg);
+  static const ApexConfig& getConfig(uint8_t unit);
 
-  static bool isConnected();
-  static unsigned long lastUpdate();
-  static const ApexProbe* getProbes();
-  static uint8_t probeCount();
+  static bool isConnected(uint8_t unit);
+  static unsigned long lastUpdate(uint8_t unit);
+  static const ApexProbe* getProbes(uint8_t unit);
+  static uint8_t probeCount(uint8_t unit);
 
 private:
-  static ApexConfig _config;
-  static ApexProbe _probes[APEX_MAX_PROBES];
-  static uint8_t _probeCount;
-  static unsigned long _lastUpdate;
-  static unsigned long _lastPoll;
-  static bool _connected;
+  struct UnitState {
+    ApexConfig   config;
+    ApexProbe    probes[APEX_MAX_PROBES];
+    uint8_t      probeCount;
+    unsigned long lastUpdate;
+    unsigned long lastPoll;
+    bool         connected;
+  };
 
-  static void _poll();
+  static UnitState _units[APEX_UNIT_COUNT];
+
+  static void _poll(uint8_t unit);
 };
 
 #endif

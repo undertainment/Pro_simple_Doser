@@ -116,7 +116,9 @@ void HttpServer::_handleRefill() {
 
 void HttpServer::_handleApexConfig() {
   if (_server.hasArg(F("ip"))) {
-    ApexConfig cfg = Apex::getConfig();
+    uint8_t unit = _server.arg(F("unit")).toInt();
+    if (unit >= APEX_UNIT_COUNT) unit = 0;
+    ApexConfig cfg = Apex::getConfig(unit);
     String ip = _server.arg(F("ip"));
     strncpy(cfg.ip, ip.c_str(), sizeof(cfg.ip) - 1);
     cfg.ip[sizeof(cfg.ip) - 1] = '\0';
@@ -132,7 +134,7 @@ void HttpServer::_handleApexConfig() {
       cfg.password[sizeof(cfg.password) - 1] = '\0';
     }
     if (_server.hasArg(F("enabled"))) cfg.enabled = _server.arg(F("enabled")) == "true";
-    Apex::setConfig(cfg);
+    Apex::setConfig(unit, cfg);
     _server.send(200, "application/json", F("{\"ok\":true}"));
   } else {
     _server.send(200, "application/json", Dashboard::renderApexJSON());
@@ -515,18 +517,7 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
 <div class="modal-overlay" id="apexModal">
   <div class="modal" style="max-width:340px">
     <h3>Apex Classic Config</h3>
-    <label>IP Address</label>
-    <input type="text" id="apexIP" placeholder="192.168.1.100">
-    <label>Port</label>
-    <input type="number" id="apexPort" value="80" min="1" max="65535">
-    <label>Username</label>
-    <input type="text" id="apexUser" placeholder="admin">
-    <label>Password</label>
-    <input type="password" id="apexPass" placeholder="password">
-    <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
-      <input type="checkbox" id="apexEnabled" style="width:auto">
-      <label for="apexEnabled" style="margin:0;font-size:.8rem">Enable Apex polling</label>
-    </div>
+    <div id="apexConfigFields"></div>
     <div class="modal-actions">
       <button class="btn btn-outline" onclick="closeApexModal()">Cancel</button>
       <button class="btn btn-primary" onclick="saveApexConfig()">Save</button>
@@ -608,14 +599,11 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
     </div>
   </div>
 
-  <!-- Row 4: Neptune Apex -->
+  <!-- Row 4: Apex Classic -->
   <div style="margin-bottom:16px">
     <div class="card">
       <div class="card-header"><h2>Apex Classic</h2><span class="action" onclick="openApexModal()">Config &rarr;</span></div>
-      <div class="card-body" id="apexContainer">
-        <div id="apexProbes" class="apex-grid"></div>
-        <div id="apexStatusBar" class="apex-status"></div>
-      </div>
+      <div class="card-body" id="apexContainer"></div>
     </div>
   </div>
 
@@ -971,29 +959,49 @@ function refillAll(){
 
 // === Apex ===
 function renderApex(data){
-  const grid=document.getElementById('apexProbes');
-  const bar=document.getElementById('apexStatusBar');
-  if(!data.enabled){
-    grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--text4);font-size:.85rem">Apex not configured. <span class="action" onclick="openApexModal()">Configure now</span></div>';
-    bar.innerHTML='';
-    return;
+  const c=document.getElementById('apexContainer');
+  let html='';
+  for(let u=0;u<data.units.length;u++){
+    const unit=data.units[u];
+    const anyOn=data.units.some(x=>x.enabled);
+    if(!anyOn){
+      html='<div style="text-align:center;padding:20px;color:var(--text4);font-size:.85rem">Apex not configured. <span class="action" onclick="openApexModal()">Configure now</span></div>';
+      break;
+    }
+    if(!unit.enabled) continue;
+    const ago=Math.floor((Date.now()-unit.lastUpdate)/1000);
+    const dotClass=unit.connected?'on':'off';
+    const connClass=unit.connected?'conn':'disc';
+    const connText=unit.connected?'Connected':'Disconnected';
+    html+='<div style="margin-bottom:'+(u<data.units.length-1?'12':'0')+'px"><div style="font-size:.7rem;font-weight:600;color:var(--text4);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Apex '+(u+1)+' &mdash; '+unit.ip+'</div>';
+    html+='<div class="apex-grid">';
+    if(unit.probes.length===0){
+      html+='<div style="grid-column:1/-1;text-align:center;padding:12px;color:var(--text4);font-size:.78rem">No probes</div>';
+    }else{
+      html+=unit.probes.map(p=>'<div class="apex-probe"><div class="p-label">'+p.label+'</div><div class="p-value">'+p.value.toFixed(2)+'</div></div>').join('');
+    }
+    html+='</div>';
+    html+='<div class="apex-status"><span class="dot '+dotClass+'"></span><span class="'+connClass+'">'+connText+'</span><span> &middot; '+ago+'s ago</span></div>';
+    html+='</div>';
   }
-  grid.innerHTML=data.probes.map(p=>
-    '<div class="apex-probe"><div class="p-label">'+p.label+'</div><div class="p-value">'+p.value.toFixed(2)+'</div></div>'
-  ).join('');
-  const ago=Math.floor((Date.now()-data.lastUpdate)/1000);
-  const connClass=data.connected?'conn':'disc';
-  const connText=data.connected?'Connected':'Disconnected';
-  const dotClass=data.connected?'on':'off';
-  bar.innerHTML='<span class="dot '+dotClass+'"></span><span class="'+connClass+'">'+connText+'</span><span> &middot; updated '+ago+'s ago &middot; <span class="action" onclick="openApexModal()">Config</span></span>';
+  c.innerHTML=html;
 }
 function openApexModal(){
   fetchJSON(API+'apex',function(data){
-    document.getElementById('apexIP').value=data.ip||'';
-    document.getElementById('apexPort').value=data.port||80;
-    document.getElementById('apexUser').value='';
-    document.getElementById('apexPass').value='';
-    document.getElementById('apexEnabled').checked=data.enabled;
+    let html='';
+    for(let u=0;u<data.units.length;u++){
+      const unit=data.units[u];
+      if(u>0)html+='<hr style="border:none;border-top:1px solid var(--border);margin:14px 0">';
+      html+='<label style="font-weight:600;color:var(--text3)">Apex '+(u+1)+'</label>';
+      html+='<label>IP Address</label><input type="text" class="apex-ip" data-unit="'+u+'" value="'+unit.ip+'" placeholder="192.168.1.100">';
+      html+='<label>Port</label><input type="number" class="apex-port" data-unit="'+u+'" value="80" min="1" max="65535">';
+      html+='<label>Username</label><input type="text" class="apex-user" data-unit="'+u+'" value="admin" placeholder="admin">';
+      html+='<label>Password</label><input type="password" class="apex-pass" data-unit="'+u+'" value="" placeholder="password">';
+      html+='<div style="display:flex;align-items:center;gap:8px;margin-top:6px">';
+      html+='<input type="checkbox" class="apex-enabled" data-unit="'+u+'" style="width:auto"'+(unit.enabled?' checked':'')+'>';
+      html+='<label for="apexEnabled" style="margin:0;font-size:.8rem">Enable Apex '+(u+1)+'</label></div>';
+    }
+    document.getElementById('apexConfigFields').innerHTML=html;
   });
   document.getElementById('apexModal').style.display='flex';
 }
@@ -1001,19 +1009,32 @@ function closeApexModal(){
   document.getElementById('apexModal').style.display='none';
 }
 function saveApexConfig(){
-  const ip=document.getElementById('apexIP').value.trim();
-  const port=document.getElementById('apexPort').value;
-  const user=document.getElementById('apexUser').value.trim();
-  const pass=document.getElementById('apexPass').value;
-  const enabled=document.getElementById('apexEnabled').checked?'true':'false';
-  if(!ip){toast('Enter Apex IP address','error');return}
-  let url='/api/apex?ip='+encodeURIComponent(ip)+'&port='+port+'&enabled='+enabled;
-  if(user)url+='&username='+encodeURIComponent(user);
-  if(pass)url+='&password='+encodeURIComponent(pass);
-  fetch(url).then(r=>r.json()).then(d=>{
-    if(d.ok){toast('Apex config saved','success');closeApexModal();loadAll()}
-    else toast('Failed to save Apex config','error');
-  });
+  const ips=document.querySelectorAll('.apex-ip');
+  const ports=document.querySelectorAll('.apex-port');
+  const users=document.querySelectorAll('.apex-user');
+  const passes=document.querySelectorAll('.apex-pass');
+  const enableds=document.querySelectorAll('.apex-enabled');
+  let pending=0,ok=true;
+  for(let u=0;u<ips.length;u++){
+    const ip=ips[u].value.trim();
+    if(!ip){toast('Enter IP for Apex '+(u+1),'error');ok=false;continue}
+    const port=ports[u].value;
+    const user=users[u].value.trim();
+    const pass=passes[u].value;
+    const enabled=enableds[u].checked?'true':'false';
+    pending++;
+    let url='/api/apex?unit='+u+'&ip='+encodeURIComponent(ip)+'&port='+port+'&enabled='+enabled;
+    if(user)url+='&username='+encodeURIComponent(user);
+    if(pass)url+='&password='+encodeURIComponent(pass);
+    fetch(url).then(r=>r.json()).then(d=>{
+      if(!d.ok)ok=false;
+      pending--;
+      if(pending===0){
+        if(ok){toast('Apex config saved','success');closeApexModal();loadAll()}
+        else toast('Failed to save Apex config','error');
+      }
+    });
+  }
 }
 
 // === Logs ===
