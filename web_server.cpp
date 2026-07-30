@@ -648,7 +648,7 @@ function renderPumps(){
       '<td>'+p.rate.toFixed(1)+' mL/min</td>'+
       '<td>'+p.totalDosed.toFixed(0)+' mL</td>'+
       '<td><span class="badge '+stateCls+'">'+stateTxt+'</span></td>'+
-      '<td><div class="pump-actions"><input type="number" value="10" id="pumpVol'+i+'" style="width:42px"><button class="btn btn-success btn-sm" onclick="dosePump('+i+')">Dose</button><button class="btn btn-outline btn-sm" onclick="calibratePump('+i+')">Cal</button><button class="btn btn-warning btn-sm" onclick="primePump('+i+')">Prime</button></div></td>';
+      '<td><div class="pump-actions"><input type="number" value="10" id="pumpVol'+i+'" style="width:42px"><button class="btn btn-success btn-sm" onclick="dosePump('+i+')">Dose</button><button class="btn btn-primary btn-sm" onclick="calibratePump('+i+')">Cal</button><button class="btn btn-warning btn-sm" onclick="primePump('+i+')">Prime</button></div></td>';
     tbody.appendChild(tr);
   }
 }
