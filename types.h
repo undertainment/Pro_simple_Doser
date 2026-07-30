@@ -30,6 +30,7 @@ struct ApexConfig {
   char     username[20];
   char     password[32];
   bool     enabled;
+  uint8_t  probeMask;  // bitmask: bit n = show probe n (default 0xFF = all)
 };
 
 struct ApexProbe {

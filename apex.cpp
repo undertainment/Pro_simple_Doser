@@ -11,6 +11,7 @@ void Apex::init() {
     _units[u].config.ip[0] = '\0';
     strcpy(_units[u].config.username, "admin");
     _units[u].config.password[0] = '\0';
+    _units[u].config.probeMask = 0xFF;
     _units[u].probeCount = 0;
     _units[u].lastUpdate = 0;
     _units[u].lastPoll = -APEX_POLL_INTERVAL_MS;

@@ -134,6 +134,7 @@ void HttpServer::_handleApexConfig() {
       cfg.password[sizeof(cfg.password) - 1] = '\0';
     }
     if (_server.hasArg(F("enabled"))) cfg.enabled = _server.arg(F("enabled")) == "true";
+    if (_server.hasArg(F("probeMask"))) cfg.probeMask = _server.arg(F("probeMask")).toInt();
     Apex::setConfig(unit, cfg);
     _server.send(200, "application/json", F("{\"ok\":true}"));
   } else {
@@ -975,10 +976,11 @@ function renderApex(data){
     const connText=unit.connected?'Connected':'Disconnected';
     html+='<div style="margin-bottom:'+(u<data.units.length-1?'12':'0')+'px"><div style="font-size:.7rem;font-weight:600;color:var(--text4);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Apex '+(u+1)+' &mdash; '+unit.ip+'</div>';
     html+='<div class="apex-grid">';
-    if(unit.probes.length===0){
-      html+='<div style="grid-column:1/-1;text-align:center;padding:12px;color:var(--text4);font-size:.78rem">No probes</div>';
+    const vis=unit.probes.filter(p=>p.display);
+    if(vis.length===0){
+      html+='<div style="grid-column:1/-1;text-align:center;padding:12px;color:var(--text4);font-size:.78rem">No probes shown</div>';
     }else{
-      html+=unit.probes.map(p=>'<div class="apex-probe"><div class="p-label">'+p.label+'</div><div class="p-value">'+p.value.toFixed(2)+'</div></div>').join('');
+      html+=vis.map(p=>'<div class="apex-probe"><div class="p-label">'+p.label+'</div><div class="p-value">'+p.value.toFixed(2)+'</div></div>').join('');
     }
     html+='</div>';
     html+='<div class="apex-status"><span class="dot '+dotClass+'"></span><span class="'+connClass+'">'+connText+'</span><span> &middot; '+ago+'s ago</span></div>';
@@ -999,7 +1001,19 @@ function openApexModal(){
       html+='<label>Password</label><input type="password" class="apex-pass" data-unit="'+u+'" value="" placeholder="password">';
       html+='<div style="display:flex;align-items:center;gap:8px;margin-top:6px">';
       html+='<input type="checkbox" class="apex-enabled" data-unit="'+u+'" style="width:auto"'+(unit.enabled?' checked':'')+'>';
-      html+='<label for="apexEnabled" style="margin:0;font-size:.8rem">Enable Apex '+(u+1)+'</label></div>';
+      html+='<label style="margin:0;font-size:.8rem">Enable Apex '+(u+1)+'</label></div>';
+      // probe visibility toggles
+      if(unit.probes && unit.probes.length>0){
+        html+='<div style="margin-top:8px;font-size:.72rem;color:var(--text4)">Show probes:</div>';
+        html+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">';
+        for(let pi=0;pi<unit.probes.length;pi++){
+          const p=unit.probes[pi];
+          html+='<label style="display:flex;align-items:center;gap:4px;font-size:.72rem;background:var(--bg);padding:3px 8px;border-radius:4px;border:1px solid var(--border);cursor:pointer">';
+          html+='<input type="checkbox" class="apex-probe-toggle" data-unit="'+u+'" data-idx="'+pi+'"'+(p.display?' checked':'')+'>';
+          html+=p.label+'</label>';
+        }
+        html+='</div>';
+      }
     }
     document.getElementById('apexConfigFields').innerHTML=html;
   });
@@ -1022,8 +1036,12 @@ function saveApexConfig(){
     const user=users[u].value.trim();
     const pass=passes[u].value;
     const enabled=enableds[u].checked?'true':'false';
+    // compute probe mask
+    const toggles=document.querySelectorAll('.apex-probe-toggle[data-unit="'+u+'"]');
+    let mask=0;
+    toggles.forEach(function(t,i){if(t.checked)mask|=1<<i});
     pending++;
-    let url='/api/apex?unit='+u+'&ip='+encodeURIComponent(ip)+'&port='+port+'&enabled='+enabled;
+    let url='/api/apex?unit='+u+'&ip='+encodeURIComponent(ip)+'&port='+port+'&enabled='+enabled+'&probeMask='+mask;
     if(user)url+='&username='+encodeURIComponent(user);
     if(pass)url+='&password='+encodeURIComponent(pass);
     fetch(url).then(r=>r.json()).then(d=>{
