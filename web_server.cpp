@@ -437,6 +437,31 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
   </div>
 </div>
 
+<!-- Calibrate Modal -->
+<div class="modal-overlay" id="calModal">
+  <div class="modal" style="max-width:360px">
+    <h3>Calibrate Pump <span id="calPumpName"></span></h3>
+    <div id="calStep1">
+      <label>Run duration (seconds)</label>
+      <input type="number" id="calDuration" value="30" min="5" max="300" step="5">
+      <div class="modal-actions">
+        <button class="btn btn-outline" onclick="closeCalModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="calRun()">Run Pump</button>
+      </div>
+    </div>
+    <div id="calStep2" style="display:none">
+      <p style="font-size:.82rem;color:var(--text3);margin-bottom:12px">Pump ran for <strong id="calActualSec">0</strong> seconds. Enter the measured output.</p>
+      <label>Measured volume (mL)</label>
+      <input type="number" id="calVolume" value="10" min="0.1" step="0.5">
+      <div id="calResult" style="display:none;font-size:.82rem;color:var(--green);margin-bottom:8px">New rate: <strong id="calNewRate">0</strong> mL/min</div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" onclick="closeCalModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="calSave()">Save Calibration</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="app">
   <div class="top-bar">
     <div class="brand">
@@ -486,7 +511,7 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
       <div class="card-header"><h2>Pump Overview</h2><span class="action" onclick="openPumpCountModal()">+ Add Pump</span></div>
       <div class="card-body" style="padding:0">
         <table>
-          <thead><tr><th style="width:32px">On</th><th>Pump</th><th style="width:58px">Pin</th><th>Rate</th><th>Dosed</th><th>Status</th><th style="min-width:130px"></th></tr></thead>
+          <thead><tr><th style="width:32px">On</th><th>Pump</th><th style="width:58px">Pin</th><th>Rate</th><th>Dosed</th><th>Status</th><th style="min-width:200px"></th></tr></thead>
           <tbody id="pumpTableBody"></tbody>
         </table>
       </div>
@@ -623,7 +648,7 @@ function renderPumps(){
       '<td>'+p.rate.toFixed(1)+' mL/min</td>'+
       '<td>'+p.totalDosed.toFixed(0)+' mL</td>'+
       '<td><span class="badge '+stateCls+'">'+stateTxt+'</span></td>'+
-      '<td><div class="pump-actions"><input type="number" value="10" id="pumpVol'+i+'" style="width:42px"><button class="btn btn-success btn-sm" onclick="dosePump('+i+')">Dose</button><button class="btn btn-warning btn-sm" onclick="primePump('+i+')">Prime</button></div></td>';
+      '<td><div class="pump-actions"><input type="number" value="10" id="pumpVol'+i+'" style="width:42px"><button class="btn btn-success btn-sm" onclick="dosePump('+i+')">Dose</button><button class="btn btn-outline btn-sm" onclick="calibratePump('+i+')">Cal</button><button class="btn btn-warning btn-sm" onclick="primePump('+i+')">Prime</button></div></td>';
     tbody.appendChild(tr);
   }
 }
@@ -643,6 +668,55 @@ function dosePump(idx){
 function primePump(idx){
   if(pumps[idx]&&pumps[idx].active===false){toast('Pump is disabled','error');return}
   fetch('/api/dose?pump='+idx+'&vol=5').then(()=>{toast('Priming '+(pumps[idx]?pumps[idx].name:'Pump '+(idx+1)),'info');loadAll()});
+}
+
+// === Calibrate ===
+let calPumpIdx=0, calStartTime=0, calTimer=null;
+function calibratePump(idx){
+  if(pumps[idx]&&pumps[idx].active===false){toast('Pump is disabled','error');return}
+  calPumpIdx=idx;
+  document.getElementById('calPumpName').textContent=pumps[idx]?pumps[idx].name:'Pump '+(idx+1);
+  document.getElementById('calStep1').style.display='block';
+  document.getElementById('calStep2').style.display='none';
+  document.getElementById('calResult').style.display='none';
+  document.getElementById('calModal').style.display='flex';
+}
+function closeCalModal(){
+  if(calTimer){clearTimeout(calTimer);calTimer=null}
+  document.getElementById('calModal').style.display='none';
+}
+document.getElementById('calModal').addEventListener('click',function(e){if(e.target===this)closeCalModal()});
+function calRun(){
+  const sec=parseInt(document.getElementById('calDuration').value)||30;
+  const p=pumps[calPumpIdx]||{rate:100};
+  const vol = (p.rate * sec / 60).toFixed(1);
+  fetch('/api/dose?pump='+calPumpIdx+'&vol=9999').then(r=>r.json()).then(d=>{
+    if(!d.ok){toast('Failed to start pump','error');return}
+    calStartTime=Date.now();
+    toast('Pump running for '+sec+'s...','info');
+    calTimer=setTimeout(function(){
+      fetch('/api/dose?pump='+calPumpIdx+'&vol=0&cancel=1').then(()=>{
+        const actualSec=((Date.now()-calStartTime)/1000).toFixed(1);
+        document.getElementById('calActualSec').textContent=actualSec;
+        document.getElementById('calStep1').style.display='none';
+        document.getElementById('calStep2').style.display='block';
+        toast('Pump stopped, enter measured volume','success');
+      });
+    },sec*1000);
+  });
+}
+function calSave(){
+  const actualSec=parseFloat(document.getElementById('calActualSec').textContent)||30;
+  const measured=parseFloat(document.getElementById('calVolume').value);
+  if(!measured||measured<0.1){toast('Enter a valid volume','error');return}
+  const newRate=(measured/(actualSec/60)).toFixed(1);
+  document.getElementById('calNewRate').textContent=newRate;
+  document.getElementById('calResult').style.display='block';
+  fetch('/api/pump?pump='+calPumpIdx+'&rate='+newRate).then(()=>{
+    toast('Calibration saved: '+newRate+' mL/min','success');
+    closeCalModal();
+    loadAll();
+  });
 }
 
 // === Pump Name Edit ===
