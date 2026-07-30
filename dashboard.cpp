@@ -59,7 +59,8 @@ String Dashboard::renderPumpJSON() {
     json += String(F("\"totalDosed\":")) + String(cfg->totalDosed, 1) + F(",");
     json += String(F("\"runTimeSec\":")) + String(cfg->runTimeSec) + F(",");
     json += String(F("\"state\":")) + String((int)Dosing::getState(i)) + F(",");
-    json += String(F("\"pin\":")) + String(cfg->pin);
+    json += String(F("\"pin\":")) + String(cfg->pin) + F(",");
+    json += String(F("\"capacity\":")) + String(cfg->capacity, 1);
     json += F("}");
   }
   json += F("]");

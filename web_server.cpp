@@ -93,6 +93,7 @@ void HttpServer::_handlePumpConfig() {
   }
   if (_server.hasArg(F("rate"))) cfg.rateMLperMin = _server.arg(F("rate")).toFloat();
   if (_server.hasArg(F("active"))) cfg.active = _server.arg(F("active")) == "true";
+  if (_server.hasArg(F("capacity"))) cfg.capacity = _server.arg(F("capacity")).toFloat();
 
   Pump::setConfig(idx, cfg);
   _server.send(200, "application/json", F("{\"ok\":true}"));
@@ -756,16 +757,16 @@ function renderReservoirs(){
   const c=document.getElementById('reservoirContainer');
   c.innerHTML='';
   const levels=[72,45,28,60,50,35,20,80];
-  const caps=['5.0','5.0','3.0','1.5','2.0','4.0','2.5','3.0'];
   const colorsR=['var(--blue)','var(--green)','#f59e0b','#8b5cf6','#ec4899','#14b8a6','#f97316','#6366f1'];
   for(let i=0;i<pumpCount;i++){
     const pct=levels[i]||50;
     const col=colorsR[i%colorsR.length];
-    const name=pumps[i]?pumps[i].name:'Pump '+(i+1);
+    const p=pumps[i]||{name:'Pump '+(i+1),capacity:5.0};
+    const cap=p.capacity||5.0;
     const div=document.createElement('div');
     div.className='reservoir-row';
     div.innerHTML=
-      '<div class="r-name"><span class="r-name-text" onclick="editReservoirName(this,'+i+')">'+name+'</span><div class="r-meta">'+(caps[i]||'2.0')+' L capacity</div></div>'+
+      '<div class="r-name"><span class="r-name-text" onclick="editReservoirName(this,'+i+')">'+p.name+'</span><div class="r-meta"><span class="r-cap-text" onclick="editReservoirCap(this,'+i+')">'+cap.toFixed(1)+' L</span> capacity</div></div>'+
       '<div class="r-level"><div class="bar"><span style="width:'+pct+'%;background:'+col+'"></span></div></div>'+
       '<span class="r-pct" style="color:'+col+'">'+pct+'%</span>';
     c.appendChild(div);
@@ -781,6 +782,27 @@ function editReservoirName(el,idx){
   inp.onblur=function(){
     const val=this.value.trim()||orig;
     fetch('/api/pump?pump='+idx+'&name='+encodeURIComponent(val)).then(()=>{loadAll();toast('Reservoir renamed to "'+val+'"','info')});
+  };
+  inp.onkeydown=function(e){
+    if(e.key==='Enter')this.blur();
+    if(e.key==='Escape'){this.value=orig;this.blur();return}
+  };
+  el.textContent='';el.appendChild(inp);inp.focus();inp.select();
+}
+function editReservoirCap(el,idx){
+  if(el.querySelector('input'))return;
+  const orig=parseFloat(el.textContent)||5.0;
+  const inp=document.createElement('input');
+  inp.className='pump-name-input';
+  inp.value=orig.toFixed(1);
+  inp.style.width='60px';
+  inp.type='number';
+  inp.step='0.5';
+  inp.min='0.5';
+  inp.onblur=function(){
+    const val=parseFloat(this.value);
+    if(!val||val<0.5){el.textContent=orig.toFixed(1)+' L';return}
+    fetch('/api/pump?pump='+idx+'&capacity='+val).then(()=>{loadAll();toast('Capacity set to '+val.toFixed(1)+' L','info')});
   };
   inp.onkeydown=function(e){
     if(e.key==='Enter')this.blur();
