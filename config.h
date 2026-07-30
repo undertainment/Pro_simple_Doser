@@ -30,7 +30,7 @@
 // Neptune Apex
 // =====================================================
 #define APEX_POLL_INTERVAL_MS  30000
-#define APEX_TIMEOUT_MS        5000
+#define APEX_TIMEOUT_MS        10000
 #define APEX_MAX_PROBES        8
 
 // =====================================================
