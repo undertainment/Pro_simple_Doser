@@ -27,10 +27,10 @@
 #define PUMP_MAX_DOSE_ML   9999.0f
 
 // =====================================================
-// Neptune Apex
+// Neptune Apex  ←  EDIT POLL INTERVAL BELOW
 // =====================================================
 #define APEX_UNIT_COUNT        2
-#define APEX_POLL_INTERVAL_MS  30000
+#define APEX_POLL_INTERVAL_MS  3600000  // milliseconds between polls (1 hour = 3600000)
 #define APEX_TIMEOUT_MS        10000
 #define APEX_MAX_PROBES        8
 
