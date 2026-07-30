@@ -23,6 +23,7 @@ void Pump::init() {
     _pumps[i].totalDosed   = 0;
     _pumps[i].runTimeSec   = 0;
     _pumps[i].capacity     = 5000.0f;
+    _pumps[i].reservoirLevel = 100;
     _running[i]            = false;
     _startMillis[i]        = 0;
 

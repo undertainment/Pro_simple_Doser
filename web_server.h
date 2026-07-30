@@ -22,6 +22,7 @@ private:
   static void _handleScheduleAdd();
   static void _handleScheduleRemove();
   static void _handleResetTotals();
+  static void _handleRefill();
   static void _handleNotFound();
 
   static String _buildDashboardHTML();

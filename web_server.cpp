@@ -36,6 +36,7 @@ void HttpServer::init() {
   _server.on("/api/schedule", _handleScheduleAdd);
   _server.on("/api/schedule/remove", _handleScheduleRemove);
   _server.on("/api/reset", _handleResetTotals);
+  _server.on("/api/refill", _handleRefill);
   _server.onNotFound(_handleNotFound);
 
   _server.begin();
@@ -97,6 +98,18 @@ void HttpServer::_handlePumpConfig() {
 
   Pump::setConfig(idx, cfg);
   _server.send(200, "application/json", F("{\"ok\":true}"));
+}
+
+void HttpServer::_handleRefill() {
+  for (uint8_t i = 0; i < PUMP_COUNT; i++) {
+    PumpConfig* cfg = Pump::getConfig(i);
+    if (cfg) {
+      cfg->reservoirLevel = 100;
+      Pump::setConfig(i, *cfg);
+    }
+  }
+  _server.send(200, "application/json", F("{\"ok\":true}"));
+}
 }
 
 void HttpServer::_handleScheduleAdd() {
@@ -525,7 +538,7 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
   <!-- Row 3: Reservoirs + Recent Activity -->
   <div class="cols-2" style="margin-bottom:24px">
     <div class="card">
-      <div class="card-header"><h2>Reservoirs</h2><span class="action" onclick="toast('Refill all reservoirs','info')">Refill All</span></div>
+      <div class="card-header"><h2>Reservoirs</h2><span class="action" onclick="refillAll()">Refill All</span></div>
       <div class="card-body" id="reservoirContainer"></div>
     </div>
     <div class="card">
@@ -830,12 +843,11 @@ function saveSchedule(){
 function renderReservoirs(){
   const c=document.getElementById('reservoirContainer');
   c.innerHTML='';
-  const levels=[72,45,28,60,50,35,20,80];
   const colorsR=['var(--blue)','var(--green)','#f59e0b','#8b5cf6','#ec4899','#14b8a6','#f97316','#6366f1'];
   for(let i=0;i<pumpCount;i++){
-    const pct=levels[i]||50;
+    const p=pumps[i]||{name:'Pump '+(i+1),capacity:5000,reservoirLevel:100};
+    const pct=p.reservoirLevel===0?0:(p.reservoirLevel||100);
     const col=colorsR[i%colorsR.length];
-    const p=pumps[i]||{name:'Pump '+(i+1),capacity:5000};
     const cap=p.capacity||5000;
     const div=document.createElement('div');
     div.className='reservoir-row';
@@ -883,6 +895,12 @@ function editReservoirCap(el,idx){
     if(e.key==='Escape'){this.value=orig;this.blur();return}
   };
   el.textContent='';el.appendChild(inp);inp.focus();inp.select();
+}
+function refillAll(){
+  fetch('/api/refill').then(r=>r.json()).then(d=>{
+    if(d.ok){toast('All reservoirs refilled','success');loadAll()}
+    else toast('Refill failed','error');
+  });
 }
 
 // === Logs ===
