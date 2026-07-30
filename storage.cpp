@@ -1,6 +1,7 @@
 #include "storage.h"
 #include "pump.h"
 #include "scheduler.h"
+#include "apex.h"
 #include "logger.h"
 #include <EEPROM.h>
 
@@ -17,6 +18,7 @@ struct StorageBlock {
   StorageHeader header;
   PumpConfig    pumps[PUMP_COUNT];
   Schedule      schedules[MAX_SCHEDULES];
+  ApexConfig    apex;
 };
 
 bool Storage::_dirty = false;
@@ -31,7 +33,7 @@ void Storage::save() {
   StorageBlock block;
   memset(&block, 0, sizeof(block));
   block.header.magic    = MAGIC;
-  block.header.version  = 1;
+  block.header.version  = 2;
   block.header.scheduleCount = Scheduler::scheduleCount();
 
   for (uint8_t i = 0; i < PUMP_COUNT; i++) {
@@ -43,6 +45,8 @@ void Storage::save() {
     const Schedule* s = Scheduler::getSchedule(i);
     if (s) block.schedules[i] = *s;
   }
+
+  block.apex = Apex::getConfig();
 
   block.header.crc = _crc16((uint8_t*)&block.pumps, sizeof(block) - sizeof(StorageHeader));
   EEPROM.put(0, block);
@@ -56,7 +60,7 @@ void Storage::load() {
   StorageBlock block;
   EEPROM.get(0, block);
 
-  if (block.header.magic != MAGIC || block.header.version != 1) {
+  if (block.header.magic != MAGIC || block.header.version < 1) {
     Logger::warn(F("No saved settings, using defaults"));
     return;
   }
@@ -73,6 +77,10 @@ void Storage::load() {
 
   for (uint8_t i = 0; i < block.header.scheduleCount; i++) {
     Scheduler::addSchedule(block.schedules[i]);
+  }
+
+  if (block.header.version >= 2) {
+    Apex::setConfig(block.apex);
   }
 
   Logger::info(String(F("Settings loaded (")) + block.header.scheduleCount + F(" schedules)"));
@@ -114,6 +122,15 @@ void Storage::setSchedule(uint8_t index, const Schedule& sched) {
 
 void Storage::setScheduleCount(uint8_t count) {
   // used after loading only
+}
+
+void Storage::getApexConfig(ApexConfig& cfg) {
+  cfg = Apex::getConfig();
+}
+
+void Storage::setApexConfig(const ApexConfig& cfg) {
+  Apex::setConfig(cfg);
+  _dirty = true;
 }
 
 uint16_t Storage::_crc16(const uint8_t* data, size_t len) {

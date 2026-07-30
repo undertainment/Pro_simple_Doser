@@ -3,6 +3,7 @@
 #include "dosing.h"
 #include "pump.h"
 #include "scheduler.h"
+#include "apex.h"
 #include "logger.h"
 
 WebServer HttpServer::_server(HTTP_PORT);
@@ -37,6 +38,7 @@ void HttpServer::init() {
   _server.on("/api/schedule/remove", _handleScheduleRemove);
   _server.on("/api/reset", _handleResetTotals);
   _server.on("/api/refill", _handleRefill);
+  _server.on("/api/apex", _handleApexConfig);
   _server.onNotFound(_handleNotFound);
 
   _server.begin();
@@ -65,7 +67,8 @@ void HttpServer::_handleAPI() {
   if (path == "status")   json = Dashboard::renderStatusJSON();
   else if (path == "pumps")  json = Dashboard::renderPumpJSON();
   else if (path == "schedules") json = Dashboard::renderScheduleJSON();
-  else if (path == "logs")   json = Dashboard::renderLogJSON();
+  else if (path == "logs")      json = Dashboard::renderLogJSON();
+  else if (path == "apex")      json = Dashboard::renderApexJSON();
   else json = F("{\"error\":\"unknown\"}");
 
   _server.send(200, "application/json", json);
@@ -109,6 +112,31 @@ void HttpServer::_handleRefill() {
     }
   }
   _server.send(200, "application/json", F("{\"ok\":true}"));
+}
+
+void HttpServer::_handleApexConfig() {
+  if (_server.hasArg(F("ip"))) {
+    ApexConfig cfg = Apex::getConfig();
+    String ip = _server.arg(F("ip"));
+    strncpy(cfg.ip, ip.c_str(), sizeof(cfg.ip) - 1);
+    cfg.ip[sizeof(cfg.ip) - 1] = '\0';
+    if (_server.hasArg(F("port"))) cfg.port = _server.arg(F("port")).toInt();
+    if (_server.hasArg(F("username"))) {
+      String u = _server.arg(F("username"));
+      strncpy(cfg.username, u.c_str(), sizeof(cfg.username) - 1);
+      cfg.username[sizeof(cfg.username) - 1] = '\0';
+    }
+    if (_server.hasArg(F("password"))) {
+      String p = _server.arg(F("password"));
+      strncpy(cfg.password, p.c_str(), sizeof(cfg.password) - 1);
+      cfg.password[sizeof(cfg.password) - 1] = '\0';
+    }
+    if (_server.hasArg(F("enabled"))) cfg.enabled = _server.arg(F("enabled")) == "true";
+    Apex::setConfig(cfg);
+    _server.send(200, "application/json", F("{\"ok\":true}"));
+  } else {
+    _server.send(200, "application/json", Dashboard::renderApexJSON());
+  }
 }
 
 void HttpServer::_handleScheduleAdd() {
@@ -348,6 +376,17 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
 .log-list .log-time{color:var(--text5);margin-right:6px}
 .log-list .log-info{color:var(--text3)}
 .log-list .log-warn{color:#d97706}
+/* Apex card */
+.apex-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.apex-probe{padding:12px;border-radius:8px;background:var(--bg);border:1px solid var(--border)}
+.apex-probe .p-label{font-size:.63rem;text-transform:uppercase;color:var(--text4);letter-spacing:.05em}
+.apex-probe .p-value{font-size:1.15rem;font-weight:700;color:var(--text2);margin-top:2px}
+.apex-status{font-size:.68rem;color:var(--text4);margin-top:8px;display:flex;align-items:center;gap:6px}
+.apex-status .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.apex-status .dot.on{background:var(--green);box-shadow:0 0 6px rgba(16,185,129,.5)}
+.apex-status .dot.off{background:var(--text4)}
+.apex-status .conn{color:var(--green);font-weight:600}
+.apex-status .disc{color:var(--text4)}
 /* Quick actions */
 .qa-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 .qa-grid button{width:100%}
@@ -472,6 +511,29 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
   </div>
 </div>
 
+<!-- Apex Config Modal -->
+<div class="modal-overlay" id="apexModal">
+  <div class="modal" style="max-width:340px">
+    <h3>Neptune Apex Config</h3>
+    <label>IP Address</label>
+    <input type="text" id="apexIP" placeholder="192.168.1.100">
+    <label>Port</label>
+    <input type="number" id="apexPort" value="80" min="1" max="65535">
+    <label>Username</label>
+    <input type="text" id="apexUser" placeholder="admin">
+    <label>Password</label>
+    <input type="password" id="apexPass" placeholder="password">
+    <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+      <input type="checkbox" id="apexEnabled" style="width:auto">
+      <label for="apexEnabled" style="margin:0;font-size:.8rem">Enable Apex polling</label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeApexModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveApexConfig()">Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="app">
   <div class="top-bar">
     <div class="brand">
@@ -542,6 +604,17 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
       <div class="card-header"><h2>Recent Activity</h2></div>
       <div class="card-body">
         <div class="log-list" id="logContainer"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 4: Neptune Apex -->
+  <div style="margin-bottom:16px">
+    <div class="card">
+      <div class="card-header"><h2>Neptune Apex</h2><span class="action" onclick="openApexModal()">Config &rarr;</span></div>
+      <div class="card-body" id="apexContainer">
+        <div id="apexProbes" class="apex-grid"></div>
+        <div id="apexStatusBar" class="apex-status"></div>
       </div>
     </div>
   </div>
@@ -896,6 +969,53 @@ function refillAll(){
   });
 }
 
+// === Apex ===
+function renderApex(data){
+  const grid=document.getElementById('apexProbes');
+  const bar=document.getElementById('apexStatusBar');
+  if(!data.enabled){
+    grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--text4);font-size:.85rem">Apex not configured. <span class="action" onclick="openApexModal()">Configure now</span></div>';
+    bar.innerHTML='';
+    return;
+  }
+  grid.innerHTML=data.probes.map(p=>
+    '<div class="apex-probe"><div class="p-label">'+p.label+'</div><div class="p-value">'+p.value.toFixed(2)+'</div></div>'
+  ).join('');
+  const ago=Math.floor((Date.now()-data.lastUpdate)/1000);
+  const connClass=data.connected?'conn':'disc';
+  const connText=data.connected?'Connected':'Disconnected';
+  const dotClass=data.connected?'on':'off';
+  bar.innerHTML='<span class="dot '+dotClass+'"></span><span class="'+connClass+'">'+connText+'</span><span> &middot; updated '+ago+'s ago &middot; <span class="action" onclick="openApexModal()">Config</span></span>';
+}
+function openApexModal(){
+  fetchJSON(API+'apex',function(data){
+    document.getElementById('apexIP').value=data.ip||'';
+    document.getElementById('apexPort').value=data.port||80;
+    document.getElementById('apexUser').value='';
+    document.getElementById('apexPass').value='';
+    document.getElementById('apexEnabled').checked=data.enabled;
+  });
+  document.getElementById('apexModal').style.display='flex';
+}
+function closeApexModal(){
+  document.getElementById('apexModal').style.display='none';
+}
+function saveApexConfig(){
+  const ip=document.getElementById('apexIP').value.trim();
+  const port=document.getElementById('apexPort').value;
+  const user=document.getElementById('apexUser').value.trim();
+  const pass=document.getElementById('apexPass').value;
+  const enabled=document.getElementById('apexEnabled').checked?'true':'false';
+  if(!ip){toast('Enter Apex IP address','error');return}
+  let url='/api/apex?ip='+encodeURIComponent(ip)+'&port='+port+'&enabled='+enabled;
+  if(user)url+='&username='+encodeURIComponent(user);
+  if(pass)url+='&password='+encodeURIComponent(pass);
+  fetch(url).then(r=>r.json()).then(d=>{
+    if(d.ok){toast('Apex config saved','success');closeApexModal();loadAll()}
+    else toast('Failed to save Apex config','error');
+  });
+}
+
 // === Logs ===
 function renderLogs(data){
   const c=document.getElementById('logContainer');
@@ -957,6 +1077,7 @@ function loadAll(){
   fetchJSON(API+'pumps',function(data){pumps=data;pumpCount=data.length;renderPumps();renderReservoirs()});
   fetchJSON(API+'schedules',function(data){schedules=data;renderSchedules()});
   fetchJSON(API+'logs',renderLogs);
+  fetchJSON(API+'apex',renderApex);
 }
 
 // === Init ===

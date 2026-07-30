@@ -24,6 +24,20 @@ struct Schedule {
   uint8_t  days;       // bitmask: Sun=1, Mon=2, Tue=4, Wed=8, Thu=16, Fri=32, Sat=64
 };
 
+struct ApexConfig {
+  char     ip[16];
+  uint16_t port;
+  char     username[20];
+  char     password[32];
+  bool     enabled;
+};
+
+struct ApexProbe {
+  char  name[12];
+  float value;
+  char  label[20];
+};
+
 struct SystemStatus {
   float    uptimeHours;
   uint32_t totalDoses;

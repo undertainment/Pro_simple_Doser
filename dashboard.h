@@ -11,6 +11,7 @@ public:
   static String renderPumpJSON();
   static String renderScheduleJSON();
   static String renderLogJSON();
+  static String renderApexJSON();
 
 private:
   static String _jsonEscape(const String& s);

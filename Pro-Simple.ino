@@ -3,6 +3,7 @@
 #include "pump.h"
 #include "dosing.h"
 #include "scheduler.h"
+#include "apex.h"
 #include "web_server.h"
 #include "storage.h"
 #include "logger.h"
@@ -16,6 +17,7 @@ void setup() {
   Serial.println(F("\n\n=== Pro-Simple Dosing Pump ==="));
 
   Logger::init();
+  Apex::init();
   Storage::init();
   Pump::init();
   Dosing::init();
@@ -31,6 +33,7 @@ void loop() {
   Pump::loop();
   Dosing::loop();
   Scheduler::loop();
+  Apex::loop();
   HttpServer::loop();
 
   if (now - lastWiFiCheck > 30000) {
