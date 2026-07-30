@@ -343,13 +343,6 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
 }
 .reservoir-row .r-level .bar span{display:block;height:100%;border-radius:4px}
 .reservoir-row .r-pct{font-size:.7rem;font-weight:600;min-width:34px;text-align:right}
-/* Chart */
-.chart-placeholder{height:80px;display:flex;align-items:flex-end;gap:4px;padding:8px 0}
-.chart-placeholder .bar{
-  flex:1;background:linear-gradient(180deg,var(--blue),#1d4ed8);
-  border-radius:2px 2px 0 0;min-height:6px;opacity:.7;
-}
-.chart-placeholder .bar:nth-child(odd){opacity:1}
 /* Log */
 .log-list{font-size:.7rem;line-height:1.7;color:var(--text4);max-height:190px;overflow-y:auto}
 .log-list .log-time{color:var(--text5);margin-right:6px}
@@ -553,18 +546,8 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
     </div>
   </div>
 
-  <!-- Row 4: Daily Usage + Quick Actions -->
-  <div class="cols-2-35" style="margin-bottom:0">
-    <div class="card">
-      <div class="card-header"><h2>Daily Usage (mL)</h2><span class="action">Week &rarr;</span></div>
-      <div class="card-body">
-        <div class="chart-placeholder">
-          <div class="bar" style="height:55px"></div><div class="bar" style="height:70px"></div><div class="bar" style="height:42px"></div><div class="bar" style="height:85px"></div><div class="bar" style="height:50px"></div><div class="bar" style="height:75px"></div><div class="bar" style="height:60px"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;font-size:.63rem;color:var(--text4);margin-top:2px"><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span></div>
-      </div>
-    </div>
-    <div class="card">
+  <!-- Quick Actions -->
+    <div class="card" style="margin-bottom:0">
       <div class="card-header"><h2>Quick Actions</h2></div>
       <div class="card-body">
         <div class="qa-grid">
@@ -582,7 +565,6 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
         <div class="timezone-label">&#9200; <select id="tzSelect" onchange="changeTimezone(this.value)"></select></div>
       </div>
     </div>
-  </div>
 </div>
 
 <script>
