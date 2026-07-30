@@ -4,10 +4,10 @@
 #include <Arduino.h>
 
 // =====================================================
-// WiFi Credentials — HARDCODED, edit before flashing
+// WiFi — include wifi_config.h (not tracked by git)
+//       Copy wifi_config.example.h → wifi_config.h and edit
 // =====================================================
-#define WIFI_SSID          "YOUR_SSID"
-#define WIFI_PASS          "YOUR_PASSWORD"
+#include "wifi_config.h"
 #define WIFI_TIMEOUT_MS    15000
 
 // =====================================================

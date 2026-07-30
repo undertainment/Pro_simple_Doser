@@ -1,6 +1,7 @@
 previews/
 .vscode/
 build/
+wifi_config.h
 *.o
 *.elf
 *.bin
