@@ -1,7 +1,6 @@
 #include "apex.h"
 #include "logger.h"
 #include <WiFi.h>
-#include <MD5Builder.h>
 
 ApexConfig Apex::_config;
 ApexProbe Apex::_probes[APEX_MAX_PROBES];
@@ -54,14 +53,20 @@ uint8_t Apex::probeCount() {
   return _probeCount;
 }
 
-// ── helpers ──────────────────────────────────────────
+// ── base64 ───────────────────────────────────────────
 
-static String _md5(const String& in) {
-  MD5Builder md5;
-  md5.begin();
-  md5.add(in);
-  md5.calculate();
-  return md5.toString();
+static const char _b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static String _base64Encode(const uint8_t* data, size_t len) {
+  String out;
+  for (size_t i = 0; i < len; i += 3) {
+    int b = (data[i] << 16) | (data[i + 1 < len ? i + 1 : i] << 8) | (data[i + 2 < len ? i + 2 : i]);
+    out += _b64[(b >> 18) & 0x3F];
+    out += _b64[(b >> 12) & 0x3F];
+    out += (i + 1 < len) ? _b64[(b >> 6) & 0x3F] : '=';
+    out += (i + 2 < len) ? _b64[b & 0x3F] : '=';
+  }
+  return out;
 }
 
 static int _readResponse(WiFiClient& c, String& out, unsigned long timeoutMs) {
@@ -71,7 +76,6 @@ static int _readResponse(WiFiClient& c, String& out, unsigned long timeoutMs) {
     while (c.available()) {
       out += (char)c.read();
     }
-    // headers + body fully received when connection closes (Connection: close)
     if (!c.connected() && !c.available()) break;
     delay(2);
   }
@@ -82,20 +86,20 @@ static int _readResponse(WiFiClient& c, String& out, unsigned long timeoutMs) {
 
 void Apex::_poll() {
   WiFiClient client;
-  String path = "/status.xml";
+  String path = "/cgi-bin/status.xml";
   String host = String(_config.ip);
-
-  Logger::info(String(F("Apex: connecting to ")) + host + ":" + String(_config.port));
+  String auth = String(_config.username) + ":" + String(_config.password);
+  String authB64 = _base64Encode((const uint8_t*)auth.c_str(), auth.length());
 
   if (!client.connect(_config.ip, _config.port, APEX_TIMEOUT_MS)) {
     _connected = false;
-    Logger::warn(F("Apex: connection failed (unreachable)"));
+    Logger::warn(F("Apex: connection failed"));
     return;
   }
 
-  // --- first request (no auth) ---
   String req = "GET " + path + " HTTP/1.1\r\n"
                "Host: " + host + "\r\n"
+               "Authorization: Basic " + authB64 + "\r\n"
                "Connection: close\r\n\r\n";
   client.print(req);
 
@@ -113,83 +117,6 @@ void Apex::_poll() {
   if (spaceIdx < 0) { _connected = false; return; }
   String statusCode = resp.substring(spaceIdx + 1, spaceIdx + 4);
 
-  // --- handle 401 digest challenge ---
-  if (statusCode == "401") {
-    int authStart = resp.indexOf("WWW-Authenticate:");
-    if (authStart < 0) authStart = resp.indexOf("www-authenticate:");
-    if (authStart < 0) {
-      Logger::warn(F("Apex: 401 but no WWW-Authenticate header"));
-      _connected = false;
-      return;
-    }
-    int authEnd = resp.indexOf('\r', authStart);
-    if (authEnd < 0) authEnd = resp.indexOf('\n', authStart);
-    if (authEnd < 0) authEnd = resp.length();
-    String authHeader = resp.substring(authStart, authEnd);
-
-    String realm, nonce, qop;
-    int r = authHeader.indexOf("realm=\"");
-    if (r >= 0) { r += 7; int e = authHeader.indexOf('"', r); if (e > r) realm = authHeader.substring(r, e); }
-    int n = authHeader.indexOf("nonce=\"");
-    if (n >= 0) { n += 7; int e = authHeader.indexOf('"', n); if (e > n) nonce = authHeader.substring(n, e); }
-    int q = authHeader.indexOf("qop=\"");
-    if (q >= 0) { q += 5; int e = authHeader.indexOf('"', q); if (e > q) qop = authHeader.substring(q, e); }
-    bool hasQop = (qop.length() > 0);
-
-    if (realm.length() == 0 || nonce.length() == 0) {
-      Logger::warn(F("Apex: digest challenge missing realm/nonce"));
-      _connected = false;
-      return;
-    }
-
-    // Build digest response
-    String ha1 = _md5(String(_config.username) + ":" + realm + ":" + String(_config.password));
-    String ha2 = _md5(String("GET") + ":" + path);
-    String digestResp;
-
-    String authLine = "Digest username=\"" + String(_config.username) + "\", "
-                      "realm=\"" + realm + "\", "
-                      "nonce=\"" + nonce + "\", "
-                      "uri=\"" + path + "\"";
-
-    if (hasQop) {
-      String cnonce = "abc123";
-      String nc = "00000001";
-      digestResp = _md5(ha1 + ":" + nonce + ":" + nc + ":" + cnonce + ":" + qop + ":" + ha2);
-      authLine += ", qop=" + qop + ", nc=" + nc + ", cnonce=\"" + cnonce + "\"";
-    } else {
-      digestResp = _md5(ha1 + ":" + nonce + ":" + ha2);
-    }
-    authLine += ", response=\"" + digestResp + "\"";
-
-    // --- second request (with auth) ---
-    if (!client.connect(_config.ip, _config.port, APEX_TIMEOUT_MS)) {
-      _connected = false;
-      Logger::warn(F("Apex: reconnect failed"));
-      return;
-    }
-
-    req = "GET " + path + " HTTP/1.1\r\n"
-          "Host: " + host + "\r\n"
-          "Authorization: " + authLine + "\r\n"
-          "Connection: close\r\n\r\n";
-    client.print(req);
-
-    resp = "";
-    _readResponse(client, resp, APEX_TIMEOUT_MS);
-    client.stop();
-
-    if (resp.length() == 0) {
-      _connected = false;
-      Logger::warn(F("Apex: empty response after auth"));
-      return;
-    }
-
-    spaceIdx = resp.indexOf(' ');
-    if (spaceIdx < 0) { _connected = false; return; }
-    statusCode = resp.substring(spaceIdx + 1, spaceIdx + 4);
-  }
-
   if (statusCode != "200") {
     Logger::warn(String(F("Apex: HTTP ")) + statusCode);
     _connected = false;
@@ -203,8 +130,6 @@ void Apex::_poll() {
   bodyStart += (resp[bodyStart + 1] == '\n' ? 2 : 4);
   String body = resp.substring(bodyStart);
   body.trim();
-
-  Logger::info(String(F("Apex: body length ")) + body.length() + F(" bytes"));
 
   // --- parse XML probes ---
   _probeCount = 0;
@@ -240,9 +165,10 @@ void Apex::_poll() {
     probe.value = pval.toFloat();
 
     if (pname == "pH") strcpy(probe.label, "pH");
-    else if (pname == "Temp" || pname == "Temperature") strcpy(probe.label, "Temp");
+    else if (pname == "Tmp" || pname == "Temp" || pname == "Temperature") strcpy(probe.label, "Temp");
     else if (pname == "ORP") strcpy(probe.label, "ORP");
     else if (pname == "Salinity" || pname == "Sal") strcpy(probe.label, "Salinity");
+    else if (pname == "Amp_3" || pname == "Amps") strcpy(probe.label, "Amps");
     else if (pname == "ALK" || pname == "Alkalinity") strcpy(probe.label, "Alk");
     else if (pname == "Ca" || pname == "Calcium") strcpy(probe.label, "Calcium");
     else if (pname == "Mg" || pname == "Magnesium") strcpy(probe.label, "Magnesium");
@@ -255,8 +181,8 @@ void Apex::_poll() {
   _lastUpdate = millis();
 
   if (_probeCount > 0) {
-    Logger::info(String(F("Apex Classic: ")) + _probeCount + F(" probes read OK"));
+    Logger::info(String(F("Apex Classic: ")) + _probeCount + F(" probes OK"));
   } else {
-    Logger::warn(F("Apex Classic: no <probe> elements found in XML"));
+    Logger::warn(F("Apex Classic: no <probe> elements found"));
   }
 }

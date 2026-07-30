@@ -27,7 +27,6 @@ private:
   static bool _connected;
 
   static void _poll();
-  static String _base64Encode(const uint8_t* data, size_t len);
 };
 
 #endif
