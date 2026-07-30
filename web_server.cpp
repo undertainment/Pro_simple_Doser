@@ -835,12 +835,12 @@ function renderReservoirs(){
   for(let i=0;i<pumpCount;i++){
     const pct=levels[i]||50;
     const col=colorsR[i%colorsR.length];
-    const p=pumps[i]||{name:'Pump '+(i+1),capacity:5.0};
-    const cap=p.capacity||5.0;
+    const p=pumps[i]||{name:'Pump '+(i+1),capacity:5000};
+    const cap=p.capacity||5000;
     const div=document.createElement('div');
     div.className='reservoir-row';
     div.innerHTML=
-      '<div class="r-name"><span class="r-name-text" onclick="editReservoirName(this,'+i+')">'+p.name+'</span><div class="r-meta"><span class="r-cap-text" onclick="editReservoirCap(this,'+i+')">'+cap.toFixed(1)+' L</span> capacity</div></div>'+
+      '<div class="r-name"><span class="r-name-text" onclick="editReservoirName(this,'+i+')">'+p.name+'</span><div class="r-meta"><span class="r-cap-text" onclick="editReservoirCap(this,'+i+')">'+cap.toFixed(0)+' mL</span> capacity</div></div>'+
       '<div class="r-level"><div class="bar"><span style="width:'+pct+'%;background:'+col+'"></span></div></div>'+
       '<span class="r-pct" style="color:'+col+'">'+pct+'%</span>';
     c.appendChild(div);
@@ -865,18 +865,18 @@ function editReservoirName(el,idx){
 }
 function editReservoirCap(el,idx){
   if(el.querySelector('input'))return;
-  const orig=parseFloat(el.textContent)||5.0;
+  const orig=parseFloat(el.textContent)||5000;
   const inp=document.createElement('input');
   inp.className='pump-name-input';
-  inp.value=orig.toFixed(1);
-  inp.style.width='60px';
+  inp.value=orig.toFixed(0);
+  inp.style.width='70px';
   inp.type='number';
-  inp.step='0.5';
-  inp.min='0.5';
+  inp.step='100';
+  inp.min='100';
   inp.onblur=function(){
     const val=parseFloat(this.value);
-    if(!val||val<0.5){el.textContent=orig.toFixed(1)+' L';return}
-    fetch('/api/pump?pump='+idx+'&capacity='+val).then(()=>{loadAll();toast('Capacity set to '+val.toFixed(1)+' L','info')});
+    if(!val||val<100){el.textContent=orig.toFixed(0)+' mL';return}
+    fetch('/api/pump?pump='+idx+'&capacity='+val).then(()=>{loadAll();toast('Capacity set to '+val.toFixed(0)+' mL','info')});
   };
   inp.onkeydown=function(e){
     if(e.key==='Enter')this.blur();

@@ -11,7 +11,7 @@ struct PumpConfig {
   bool     active;
   float    totalDosed;
   uint32_t runTimeSec;
-  float    capacity;    // reservoir capacity in liters
+  float    capacity;    // reservoir capacity in mL
 };
 
 struct Schedule {
