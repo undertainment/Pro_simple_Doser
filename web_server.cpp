@@ -916,7 +916,7 @@ function refillAll(){
 // === Logs ===
 function renderLogs(data){
   const c=document.getElementById('logContainer');
-  c.innerHTML=data.map(l=>'<div><span class="log-time">--</span><span class="log-info">'+l+'</span></div>').join('');
+  c.innerHTML=data.slice(-10).map(l=>'<div><span class="log-time">--</span><span class="log-info">'+l+'</span></div>').join('');
 }
 
 // === Status ===
