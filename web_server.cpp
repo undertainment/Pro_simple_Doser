@@ -110,7 +110,6 @@ void HttpServer::_handleRefill() {
   }
   _server.send(200, "application/json", F("{\"ok\":true}"));
 }
-}
 
 void HttpServer::_handleScheduleAdd() {
   Schedule s;
