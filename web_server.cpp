@@ -875,6 +875,7 @@ function editReservoirName(el,idx){
   inp.style.width='90px';
   inp.onblur=function(){
     const val=this.value.trim()||orig;
+    el.textContent=val;
     fetch('/api/pump?pump='+idx+'&name='+encodeURIComponent(val)).then(()=>{loadAll();toast('Reservoir renamed to "'+val+'"','info')});
   };
   inp.onkeydown=function(e){
@@ -896,6 +897,7 @@ function editReservoirCap(el,idx){
   inp.onblur=function(){
     const val=parseFloat(this.value);
     if(!val||val<100){el.textContent=orig.toFixed(0)+' mL';return}
+    el.textContent=val.toFixed(0)+' mL';
     fetch('/api/pump?pump='+idx+'&capacity='+val).then(()=>{loadAll();toast('Capacity set to '+val.toFixed(0)+' mL','info')});
   };
   inp.onkeydown=function(e){
