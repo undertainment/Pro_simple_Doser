@@ -1,0 +1,10 @@
+previews/
+.vscode/
+build/
+*.o
+*.elf
+*.bin
+*.part
+*.super
+.DS_Store
+Thumbs.db
