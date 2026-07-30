@@ -514,7 +514,7 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
 <!-- Apex Config Modal -->
 <div class="modal-overlay" id="apexModal">
   <div class="modal" style="max-width:340px">
-    <h3>Neptune Apex Config</h3>
+    <h3>Apex Classic Config</h3>
     <label>IP Address</label>
     <input type="text" id="apexIP" placeholder="192.168.1.100">
     <label>Port</label>
@@ -611,7 +611,7 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
   <!-- Row 4: Neptune Apex -->
   <div style="margin-bottom:16px">
     <div class="card">
-      <div class="card-header"><h2>Neptune Apex</h2><span class="action" onclick="openApexModal()">Config &rarr;</span></div>
+      <div class="card-header"><h2>Apex Classic</h2><span class="action" onclick="openApexModal()">Config &rarr;</span></div>
       <div class="card-body" id="apexContainer">
         <div id="apexProbes" class="apex-grid"></div>
         <div id="apexStatusBar" class="apex-status"></div>

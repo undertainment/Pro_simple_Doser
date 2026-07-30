@@ -17,7 +17,7 @@ void Apex::init() {
   strcpy(_config.username, "admin");
   _config.password[0] = '\0';
   _probeCount = 0;
-  Logger::info(F("Apex client initialized"));
+  Logger::info(F("Apex Classic client initialized"));
 }
 
 void Apex::loop() {
@@ -96,7 +96,7 @@ void Apex::_poll() {
     return;
   }
 
-  String path = "/rest/probe";
+  String path = "/status.xml";
   String req = "GET " + path + " HTTP/1.1\r\n"
                "Host: " + String(_config.ip) + ":" + String(_config.port) + "\r\n"
                "Connection: close\r\n\r\n";
@@ -184,37 +184,31 @@ void Apex::_poll() {
   String body = resp.substring(bodyStart);
   body.trim();
 
-  // Parse JSON probe array: [{"id":"Px1","name":"pH","value":"8.12","type":"pH"},...]
+  // Parse XML probe data: <probe><name>pH</name><value>8.12</value>...</probe>
   _probeCount = 0;
   int pos = 0;
   while (_probeCount < APEX_MAX_PROBES) {
-    int openBrace = body.indexOf('{', pos);
-    if (openBrace < 0) break;
-    int closeBrace = body.indexOf('}', openBrace);
-    if (closeBrace < 0) break;
-    String obj = body.substring(openBrace + 1, closeBrace);
-    pos = closeBrace + 1;
+    int ps = body.indexOf("<probe>", pos);
+    if (ps < 0) break;
+    int pe = body.indexOf("</probe>", ps);
+    if (pe < 0) break;
+    String block = body.substring(ps + 7, pe);
+    pos = pe + 8;
 
-    // Extract name
-    int ni = obj.indexOf("\"name\":\"");
+    int ni = block.indexOf("<name>");
     if (ni < 0) continue;
-    ni += 8;
-    int ne = obj.indexOf('"', ni);
+    ni += 6;
+    int ne = block.indexOf("</name>", ni);
     if (ne < 0) continue;
-    String pname = obj.substring(ni, ne);
+    String pname = block.substring(ni, ne);
     pname.trim();
 
-    // Extract value
-    int vi = obj.indexOf("\"value\":\"");
-    if (vi < 0) vi = obj.indexOf("\"value\":");
+    int vi = block.indexOf("<value>");
     if (vi < 0) continue;
-    vi = obj.indexOf(':', vi) + 1;
-    while (vi < (int)obj.length() && obj[vi] == '"') vi++;
-    int ve = vi;
-    while (ve < (int)obj.length() && obj[ve] != ',' && obj[ve] != '}') ve++;
-    // backtrack past closing quote
-    if (ve > vi && obj[ve - 1] == '"') ve--;
-    String pval = obj.substring(vi, ve);
+    vi += 7;
+    int ve = block.indexOf("</value>", vi);
+    if (ve < 0) continue;
+    String pval = block.substring(vi, ve);
     pval.trim();
 
     ApexProbe& probe = _probes[_probeCount];
@@ -222,7 +216,6 @@ void Apex::_poll() {
     probe.name[sizeof(probe.name) - 1] = '\0';
     probe.value = pval.toFloat();
 
-    // Build a readable label
     if (pname == "pH") strcpy(probe.label, "pH");
     else if (pname == "Temp" || pname == "Temperature") strcpy(probe.label, "Temp");
     else if (pname == "ORP") strcpy(probe.label, "ORP");
@@ -237,5 +230,5 @@ void Apex::_poll() {
 
   _connected = _probeCount > 0;
   _lastUpdate = millis();
-  Logger::info(String(F("Apex: fetched ")) + _probeCount + F(" probes"));
+  Logger::info(String(F("Apex Classic: fetched ")) + _probeCount + F(" probes"));
 }
