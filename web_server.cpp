@@ -429,9 +429,13 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
     <label>Pump</label>
     <select id="sPump"></select>
     <div style="display:flex;gap:10px">
-      <div style="flex:1"><label>Hour</label><input type="number" id="sHour" value="8" min="0" max="23"></div>
+      <div style="flex:1"><label>Hour</label><input type="number" id="sHour" value="8" min="1" max="12"></div>
       <div style="flex:1"><label>Minute</label><input type="number" id="sMin" value="0" min="0" max="59"></div>
       <div style="flex:1"><label>Dose (mL)</label><input type="number" id="sVol" value="10" min="1" step="0.5"></div>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:12px" id="ampmChips">
+      <span class="chip active" data-ampm="AM" style="padding:4px 14px;border-radius:6px;font-size:.72rem;font-weight:500;border:1px solid var(--border);cursor:pointer;background:var(--blue);color:#fff;border-color:var(--blue)">AM</span>
+      <span class="chip" data-ampm="PM" style="padding:4px 14px;border-radius:6px;font-size:.72rem;font-weight:500;border:1px solid var(--border);cursor:pointer;color:var(--text3);background:transparent">PM</span>
     </div>
     <label style="margin-top:4px">Days</label>
     <div class="day-chips" id="dayChips">
@@ -792,10 +796,10 @@ function renderSchedules(){
     div.innerHTML=
       '<div class="spp-header"><span>'+(pumps[p]?pumps[p].name:'Pump '+(p+1))+'</span><span class="spp-count">'+pScheds.length+'/'+MAX_SCHED_PER_PUMP+'</span></div>'+
       pScheds.map(s=>{
-        const h=String(s.hour).padStart(2,'0'),m=String(s.minute).padStart(2,'0');
+        let h24=s.hour;const ampm=h24>=12?'PM':'AM';let h12=h24%12||12;const hh=String(h12).padStart(2,'0'),m=String(s.minute).padStart(2,'0');
         const dayStr=days.filter((_,d)=>(s.days>>d)&1).join(', ')||'None';
         const sIdx=schedules.indexOf(s);
-        return '<div class="sched-row"><span class="sched-time">'+h+':'+m+'</span><span class="sched-detail">'+s.doseML.toFixed(1)+' mL</span><span class="sched-days">'+dayStr+'</span><button class="btn btn-outline btn-sm" onclick="removeSchedule('+sIdx+')">Remove</button></div>';
+        return '<div class="sched-row"><span class="sched-time">'+hh+':'+m+' '+ampm+'</span><span class="sched-detail">'+s.doseML.toFixed(1)+' mL</span><span class="sched-days">'+dayStr+'</span><button class="btn btn-outline btn-sm" onclick="removeSchedule('+sIdx+')">Remove</button></div>';
       }).join('');
     c.appendChild(div);
   }
@@ -823,16 +827,21 @@ function openSchedModal(){
 function closeSchedModal(){document.getElementById('schedModal').style.display='none'}
 document.getElementById('schedModal').addEventListener('click',function(e){if(e.target===this)closeSchedModal()});
 qsa('#dayChips .chip').forEach(c=>{c.addEventListener('click',function(){this.classList.toggle('active')})});
+qsa('#ampmChips .chip').forEach(c=>{c.addEventListener('click',function(){qsa('#ampmChips .chip').forEach(x=>{x.style.background='transparent';x.style.color='var(--text3)';x.style.borderColor='var(--border)'});this.style.background='var(--blue)';this.style.color='#fff';this.style.borderColor='var(--blue)'})});
 function saveSchedule(){
   const pump=parseInt(document.getElementById('sPump').value);
-  const h=document.getElementById('sHour').value.padStart(2,'0');
+  let h=parseInt(document.getElementById('sHour').value)||8;
   const m=document.getElementById('sMin').value.padStart(2,'0');
   const v=document.getElementById('sVol').value;
+  const isPM=document.querySelector('#ampmChips .chip.active').dataset.ampm==='PM';
+  if(isPM&&h<12)h+=12;
+  if(!isPM&&h===12)h=0;
+  const hh=String(h).padStart(2,'0');
   const days=[...qsa('#dayChips .chip.active')].map(c=>c.dataset.d).join(',');
   const sCount=schedules.filter(s=>s.pumpIndex===pump).length;
   if(sCount>=MAX_SCHED_PER_PUMP){toast('Max '+MAX_SCHED_PER_PUMP+' schedules for this pump','error');return}
   const dayMask=[...qsa('#dayChips .chip.active')].reduce((m,c)=>m|parseInt(c.dataset.d),0);
-  fetch('/api/schedule?pump='+pump+'&hour='+h+'&minute='+m+'&vol='+v+'&days='+dayMask)
+  fetch('/api/schedule?pump='+pump+'&hour='+hh+'&minute='+m+'&vol='+v+'&days='+dayMask)
     .then(r=>r.json()).then(d=>{
       if(d.ok){toast('Schedule saved','success');closeSchedModal();loadAll()}
       else toast('Failed to save','error');
