@@ -521,7 +521,7 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
   <!-- Row 2: Pump Overview + Schedules -->
   <div class="cols-2-66" style="margin-bottom:24px">
     <div class="card">
-      <div class="card-header"><h2>Pump Overview</h2><span class="action" onclick="openPumpCountModal()">+ Add Pump</span></div>
+      <div class="card-header"><h2>Pump Overview</h2></div>
       <div class="card-body" style="padding:0">
         <table>
           <thead><tr><th style="width:32px">On</th><th>Pump</th><th style="width:58px">Pin</th><th>Rate</th><th>Dosed</th><th>Status</th><th style="min-width:200px"></th></tr></thead>
@@ -569,7 +569,7 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
           <button class="btn btn-warning" onclick="primeAll()">Prime All</button>
           <button class="btn btn-outline" onclick="reboot()">Reboot</button>
           <button class="btn btn-outline" onclick="syncNTP()">Sync NTP</button>
-          <button class="btn btn-outline" onclick="toast('Settings','info')">Settings</button>
+          <button class="btn btn-outline" onclick="openPumpCountModal()">Pump Config</button>
         </div>
         <div class="time-row">
           <input type="text" id="manualTime" placeholder="YYYY-MM-DD HH:MM">
