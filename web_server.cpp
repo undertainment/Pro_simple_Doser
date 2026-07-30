@@ -940,6 +940,8 @@ function setManualTime(){
 
 // === Load All ===
 function loadAll(){
+  // skip if inline edit is active (input focused)
+  if(document.querySelector('.pump-name-input'))return;
   fetchJSON(API+'status',renderStatus);
   fetchJSON(API+'pumps',function(data){pumps=data;pumpCount=data.length;renderPumps();renderReservoirs()});
   fetchJSON(API+'schedules',function(data){schedules=data;renderSchedules()});
