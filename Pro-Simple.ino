@@ -18,11 +18,12 @@ void setup() {
 
   Logger::init();
   Apex::init();
-  Storage::init();
   Pump::init();
   Dosing::init();
   Scheduler::init();
+  Storage::init();
   HttpServer::init();
+  Scheduler::syncTime();
 
   Logger::info(F("System ready"));
 }

@@ -4,7 +4,28 @@
 #include "pump.h"
 #include "scheduler.h"
 #include "apex.h"
+#include "storage.h"
 #include "logger.h"
+#include <time.h>
+#include <sys/time.h>
+#include <ArduinoJson.h>
+#include <Esp.h>
+
+static String _escapeJson(const String& s) {
+  String out;
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s.charAt(i);
+    switch (c) {
+      case '"':  out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\n': out += "\\n";  break;
+      case '\r': out += "\\r";  break;
+      case '\t': out += "\\t";  break;
+      default:   out += c;
+    }
+  }
+  return out;
+}
 
 WebServer HttpServer::_server(HTTP_PORT);
 bool HttpServer::_apMode = false;
@@ -39,6 +60,10 @@ void HttpServer::init() {
   _server.on("/api/reset", _handleResetTotals);
   _server.on("/api/refill", _handleRefill);
   _server.on("/api/apex", _handleApexConfig);
+  _server.on("/api/ntp", _handleNTP);
+  _server.on("/api/timezone", _handleTimeZone);
+  _server.on("/api/config/export", _handleConfigExport);
+  _server.on("/api/config/import", HTTP_POST, _handleConfigImport);
   _server.onNotFound(_handleNotFound);
 
   _server.begin();
@@ -100,17 +125,13 @@ void HttpServer::_handlePumpConfig() {
   if (_server.hasArg(F("capacity"))) cfg.capacity = _server.arg(F("capacity")).toFloat();
 
   Pump::setConfig(idx, cfg);
+  Storage::save();
   _server.send(200, "application/json", F("{\"ok\":true}"));
 }
 
 void HttpServer::_handleRefill() {
-  for (uint8_t i = 0; i < PUMP_COUNT; i++) {
-    PumpConfig* cfg = Pump::getConfig(i);
-    if (cfg) {
-      cfg->reservoirLevel = 100;
-      Pump::setConfig(i, *cfg);
-    }
-  }
+  Pump::refillAll();
+  Storage::save();
   _server.send(200, "application/json", F("{\"ok\":true}"));
 }
 
@@ -136,6 +157,11 @@ void HttpServer::_handleApexConfig() {
     if (_server.hasArg(F("enabled"))) cfg.enabled = _server.arg(F("enabled")) == "true";
     if (_server.hasArg(F("probeMask"))) cfg.probeMask = _server.arg(F("probeMask")).toInt();
     Apex::setConfig(unit, cfg);
+    if (_server.hasArg(F("pollIntervalMs"))) {
+      uint32_t ms = _server.arg(F("pollIntervalMs")).toInt();
+      if (ms >= 10000) Apex::setPollIntervalMs(unit, ms);
+    }
+    Storage::markDirty();
     _server.send(200, "application/json", F("{\"ok\":true}"));
   } else {
     _server.send(200, "application/json", Dashboard::renderApexJSON());
@@ -152,6 +178,7 @@ void HttpServer::_handleScheduleAdd() {
   s.days      = _server.arg(F("days")).toInt();
 
   bool ok = Scheduler::addSchedule(s);
+  if (ok) Storage::save();
   _server.send(200, "application/json",
                ok ? F("{\"ok\":true}") : F("{\"ok\":false}"));
 }
@@ -159,18 +186,186 @@ void HttpServer::_handleScheduleAdd() {
 void HttpServer::_handleScheduleRemove() {
   int idx = _server.arg(F("index")).toInt();
   Scheduler::removeSchedule(idx);
+  Storage::save();
   _server.send(200, "application/json", F("{\"ok\":true}"));
 }
 
 void HttpServer::_handleResetTotals() {
+  if (_server.arg(F("reboot")) == "1") {
+    Logger::info(F("Rebooting via web dashboard"));
+    _server.send(200, "application/json", F("{\"ok\":true}"));
+    delay(200);
+    ESP.restart();
+    return;
+  }
   for (uint8_t i = 0; i < PUMP_COUNT; i++) {
     Pump::resetTotal(i);
   }
+  Storage::save();
+  _server.send(200, "application/json", F("{\"ok\":true}"));
+}
+
+void HttpServer::_handleNTP() {
+  Scheduler::syncTime();
+  Logger::info(F("NTP sync requested"));
+  _server.send(200, "application/json", F("{\"ok\":true}"));
+}
+
+void HttpServer::_handleTimeZone() {
+  int16_t offsetMin = _server.arg(F("min")).toInt();
+  Scheduler::setTimeZoneOffsetMin(offsetMin);
+  Storage::save();
   _server.send(200, "application/json", F("{\"ok\":true}"));
 }
 
 void HttpServer::_handleNotFound() {
   _server.send(404, "application/json", F("{\"error\":\"not found\"}"));
+}
+
+void HttpServer::_handleConfigExport() {
+  String json = F("{\"version\":1,\"tzOffsetMin\":");
+  json += String(Scheduler::timeZoneOffsetMin());
+  json += F(",\"pumps\":[");
+  for (uint8_t i = 0; i < PUMP_COUNT; i++) {
+    PumpConfig* cfg = Pump::getConfig(i);
+    if (!cfg) continue;
+    if (i > 0) json += F(",");
+    json += F("{\"name\":\"");
+    json += _escapeJson(String(cfg->name));
+    json += F("\",\"rate\":");
+    json += String(cfg->rateMLperMin, 2);
+    json += F(",\"active\":");
+    json += String(cfg->active ? F("true") : F("false"));
+    json += F(",\"capacity\":");
+    json += String(cfg->capacity, 1);
+    json += F(",\"reservoirRemaining\":");
+    json += String(Pump::reservoirRemaining(i), 1);
+    json += F(",\"totalDosed\":");
+    json += String(cfg->totalDosed, 1);
+    json += F(",\"runTimeSec\":");
+    json += String(cfg->runTimeSec);
+    json += F("}");
+  }
+  json += F("],\"schedules\":[");
+  for (uint8_t i = 0; i < Scheduler::scheduleCount(); i++) {
+    const Schedule* s = Scheduler::getSchedule(i);
+    if (!s) continue;
+    if (i > 0) json += F(",");
+    json += F("{\"pumpIndex\":");
+    json += String(s->pumpIndex);
+    json += F(",\"hour\":");
+    json += String(s->hour);
+    json += F(",\"minute\":");
+    json += String(s->minute);
+    json += F(",\"doseML\":");
+    json += String(s->doseML, 2);
+    json += F(",\"enabled\":");
+    json += String(s->enabled ? F("true") : F("false"));
+    json += F(",\"days\":");
+    json += String(s->days);
+    json += F("}");
+  }
+  json += F("],\"apex\":[");
+  for (uint8_t u = 0; u < APEX_UNIT_COUNT; u++) {
+    ApexConfig cfg = Apex::getConfig(u);
+    if (u > 0) json += F(",");
+    json += F("{\"ip\":\"");
+    json += _escapeJson(String(cfg.ip));
+    json += F("\",\"port\":");
+    json += String(cfg.port);
+    json += F(",\"username\":\"");
+    json += _escapeJson(String(cfg.username));
+    json += F("\",\"password\":\"");
+    json += _escapeJson(String(cfg.password));
+    json += F("\",\"enabled\":");
+    json += String(cfg.enabled ? F("true") : F("false"));
+    json += F(",\"probeMask\":");
+    json += String(cfg.probeMask);
+    json += F("}");
+  }
+  json += F("]}");
+  _server.send(200, "application/json", json);
+}
+
+void HttpServer::_handleConfigImport() {
+  String body = _server.arg(F("plain"));
+  if (body.length() == 0) {
+    _server.send(400, "application/json", F("{\"ok\":false,\"error\":\"empty body\"}"));
+    return;
+  }
+
+  JsonDocument doc;
+  if (deserializeJson(doc, body)) {
+    _server.send(400, "application/json", F("{\"ok\":false,\"error\":\"invalid json\"}"));
+    return;
+  }
+
+  if (doc[F("tzOffsetMin")].is<int>()) {
+    Scheduler::setTimeZoneOffsetMin(doc[F("tzOffsetMin")].as<int16_t>());
+  }
+
+  JsonArray pumps = doc[F("pumps")].as<JsonArray>();
+  for (uint8_t i = 0; i < PUMP_COUNT && i < pumps.size(); i++) {
+    JsonObject p = pumps[i];
+    PumpConfig cfg;
+    PumpConfig* cur = Pump::getConfig(i);
+    if (cur) cfg = *cur;
+
+    if (p[F("name")].is<const char*>()) {
+      strncpy(cfg.name, p[F("name")].as<const char*>(), sizeof(cfg.name) - 1);
+      cfg.name[sizeof(cfg.name) - 1] = '\0';
+    }
+    if (!p[F("rate")].isNull()) cfg.rateMLperMin = p[F("rate")].as<float>();
+    if (p[F("active")].is<bool>()) cfg.active = p[F("active")].as<bool>();
+    if (!p[F("capacity")].isNull()) cfg.capacity = p[F("capacity")].as<float>();
+    if (!p[F("totalDosed")].isNull()) cfg.totalDosed = p[F("totalDosed")].as<float>();
+    if (!p[F("runTimeSec")].isNull()) cfg.runTimeSec = p[F("runTimeSec")].as<uint32_t>();
+
+    Pump::setConfig(i, cfg);
+    if (!p[F("reservoirRemaining")].isNull()) {
+      Pump::setReservoirRemaining(i, p[F("reservoirRemaining")].as<float>());
+    }
+  }
+
+  // rebuild schedules
+  while (Scheduler::scheduleCount() > 0) Scheduler::removeSchedule(0);
+  JsonArray scheds = doc[F("schedules")].as<JsonArray>();
+  for (JsonObject s : scheds) {
+    Schedule sch;
+    sch.pumpIndex = s[F("pumpIndex")] | 0;
+    sch.hour      = s[F("hour")] | 0;
+    sch.minute    = s[F("minute")] | 0;
+    sch.doseML    = s[F("doseML")] | 0;
+    sch.enabled   = s[F("enabled")] | true;
+    sch.days      = s[F("days")] | 0xFF;
+    Scheduler::addSchedule(sch);
+  }
+
+  JsonArray apex = doc[F("apex")].as<JsonArray>();
+  for (uint8_t u = 0; u < APEX_UNIT_COUNT && u < apex.size(); u++) {
+    JsonObject a = apex[u];
+    ApexConfig cfg = Apex::getConfig(u);
+    if (a[F("ip")].is<const char*>()) {
+      strncpy(cfg.ip, a[F("ip")].as<const char*>(), sizeof(cfg.ip) - 1);
+      cfg.ip[sizeof(cfg.ip) - 1] = '\0';
+    }
+    if (a[F("port")].is<int>()) cfg.port = a[F("port")].as<uint16_t>();
+    if (a[F("username")].is<const char*>()) {
+      strncpy(cfg.username, a[F("username")].as<const char*>(), sizeof(cfg.username) - 1);
+      cfg.username[sizeof(cfg.username) - 1] = '\0';
+    }
+    if (a[F("password")].is<const char*>()) {
+      strncpy(cfg.password, a[F("password")].as<const char*>(), sizeof(cfg.password) - 1);
+      cfg.password[sizeof(cfg.password) - 1] = '\0';
+    }
+    if (a[F("enabled")].is<bool>()) cfg.enabled = a[F("enabled")].as<bool>();
+    if (a[F("probeMask")].is<int>()) cfg.probeMask = a[F("probeMask")].as<uint8_t>();
+    Apex::setConfig(u, cfg);
+  }
+
+  Storage::save();
+  Logger::info(F("Config imported from backup"));
+  _server.send(200, "application/json", F("{\"ok\":true}"));
 }
 
 String HttpServer::_buildDashboardHTML() {
@@ -184,19 +379,21 @@ R"rawliteral(<!DOCTYPE html>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
-  --bg:#0a0e17;--bg2:#111827;--bg3:#1a2332;
-  --border:#1f2937;--border2:#2a3a5c;
-  --text:#c8d0dc;--text2:#e5e7eb;--text3:#9ca3af;--text4:#4b5563;--text5:#374151;
-  --blue:#3b82f6;--green:#10b981;--red:#ef4444;
+  --bg:#1a1d23;--bg2:#14161b;--bg3:#1e2128;
+  --border:#2a2e35;--border2:#3a3f48;
+  --text:#d4d7dd;--text2:#f0f1f3;--text3:#9ca3af;--text4:#6b7280;--text5:#4b5563;
+  --accent:#ff8c42;--accent2:#f59e0b;
+  --green:#34d399;--blue:#3b82f6;--red:#ef4444;
 }
 body.light{
   --bg:#f5f7fa;--bg2:#fff;--bg3:#f0f4ff;
   --border:#e5e7eb;--border2:#d1d5db;
   --text:#374151;--text2:#111827;--text3:#6b7280;--text4:#9ca3af;--text5:#d1d5db;
+  --accent:#f97316;--accent2:#eab308;
 }
 body{
-  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,sans-serif;
-  background:var(--bg);color:var(--text);padding:32px;
+  font-family:system-ui,-apple-system,'Segoe UI',sans-serif;
+  background:var(--bg);color:var(--text);padding:20px;
   transition:background .3s,color .3s;
 }
 .app{max-width:1200px;margin:0 auto}
@@ -218,14 +415,19 @@ body{
 @keyframes toastOut{to{opacity:0;transform:translateY(-16px)}}
 /* Top bar */
 .top-bar{
-  display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:12px;
+  display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;
+  padding:10px 18px;border-radius:8px 8px 0 0;
+  background:var(--bg2);border:1px solid var(--border);border-bottom:none;
 }
-.brand h1{font-size:1.3rem;font-weight:700;color:var(--text2);letter-spacing:-.02em}
-.brand h1 span{color:var(--blue)}
-.brand .tag{font-size:.75rem;color:var(--text4);margin-top:2px}
+.brand h1{font-size:.85rem;font-weight:600;color:var(--accent);letter-spacing:.04em}
+.brand h1 span{color:var(--text);font-weight:400}
+.brand .tag{font-size:.72rem;color:var(--text4);margin-top:2px;display:flex;align-items:center;gap:6px}
+.hmi-led{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:2px}
+.hmi-led.on{background:var(--green);box-shadow:0 0 6px var(--green)}
+.hmi-led.off{background:var(--red);box-shadow:0 0 6px var(--red)}
 .user-info{display:flex;align-items:center;gap:14px;font-size:.8rem;color:var(--text3)}
 .header-clock{display:flex;flex-direction:column;align-items:flex-end;line-height:1.3}
-.header-clock #clockDisplay{font-size:.9rem;font-weight:600;color:var(--text2);font-family:monospace}
+.header-clock #clockDisplay{font-size:.82rem;font-weight:600;color:var(--text2);font-family:'SF Mono','Fira Code',monospace}
 .header-clock #dateDisplay{font-size:.68rem;color:var(--text4)}
 .theme-toggle-wrap{display:flex;align-items:center;gap:6px}
 .theme-toggle{
@@ -245,46 +447,53 @@ body.light .theme-toggle .knob{left:22px;background:#fff}
   color:#fff;font-weight:600;font-size:.82rem;
   box-shadow:0 0 20px rgba(59,130,246,.2);
 }
-/* KPI */
-.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}
+/* KPI Gauges */
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
 .kpi-card{
-  background:var(--bg2);border-radius:12px;padding:18px 20px;
-  border:1px solid var(--border);transition:all .2s;
+  background:var(--bg2);border:1px solid var(--border);border-radius:6px;
+  padding:14px 16px;position:relative;border-left:3px solid var(--accent);transition:all .2s;
 }
-.kpi-card:hover{border-color:var(--blue);box-shadow:0 0 20px rgba(59,130,246,.05)}
-.kpi-card .kpi-label{font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text4);margin-bottom:5px}
-.kpi-card .kpi-value{font-size:1.4rem;font-weight:700;color:var(--text2)}
-.kpi-card .kpi-change{font-size:.72rem;margin-top:4px}
-.kpi-card .kpi-change.up{color:var(--green)}
-.kpi-card .kpi-change.down{color:var(--red)}
+.kpi-card:hover{border-color:var(--border2)}
+.kpi-card .kpi-label{font-size:.65rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text4);margin-bottom:4px}
+.kpi-card .kpi-value{font-size:1.5rem;font-weight:700;color:var(--text2);margin-top:2px;font-feature-settings:'tnum'1}
+.kpi-card .kpi-value .kpi-unit{font-size:.7rem;color:var(--text4);font-weight:400;margin-left:2px}
+.kpi-card .kpi-sub{font-size:.68rem;margin-top:4px;color:var(--text3)}
+.kpi-card .kpi-bar{margin-top:8px;height:3px;background:var(--border);border-radius:2px;overflow:hidden}
+.kpi-card .kpi-bar span{display:block;height:100%;border-radius:2px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+.kpi-card.green{border-left-color:var(--green)}
+.kpi-card.green .kpi-bar span{background:linear-gradient(90deg,var(--green),#6ee7b7)}
+.kpi-card.blue{border-left-color:var(--blue)}
+.kpi-card.blue .kpi-bar span{background:linear-gradient(90deg,var(--blue),#60a5fa)}
 /* Grid */
-.cols-2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:24px}
-.cols-2-66{display:grid;grid-template-columns:1.6fr 1fr;gap:14px;margin-bottom:24px}
-.cols-2-35{display:grid;grid-template-columns:1fr 1.3fr;gap:14px;margin-bottom:24px}
-/* Cards */
-.card{
-  background:var(--bg2);border-radius:12px;border:1px solid var(--border);
+.cols-2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+.cols-2-66{display:grid;grid-template-columns:1.6fr 1fr;gap:12px;margin-bottom:16px}
+.cols-2-35{display:grid;grid-template-columns:1fr 1.3fr;gap:12px;margin-bottom:16px}
+/* Cards / Panels */
+.card,.hmi-panel{
+  background:var(--bg2);border-radius:6px;border:1px solid var(--border);
   overflow:hidden;transition:border-color .2s;
 }
-.card:hover{border-color:var(--border2)}
-.card-header{
-  padding:14px 20px;border-bottom:1px solid var(--border);
+.card:hover,.hmi-panel:hover{border-color:var(--border2)}
+.card-header,.hp-header{
+  background:var(--bg3);padding:8px 14px;
+  border-bottom:1px solid var(--border);
   display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;
 }
-.card-header h2{font-size:.82rem;font-weight:600;color:var(--text2)}
-.card-header .action{font-size:.72rem;color:var(--blue);cursor:pointer;font-weight:500}
-.card-header .action:hover{color:#60a5fa}
-.card-body{padding:16px 20px}
+.card-header h2,.hp-header h3{font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text3)}
+.card-header .action,.hp-header .action{font-size:.68rem;color:var(--accent);cursor:pointer;font-weight:500}
+.card-header .action:hover,.hp-header .action:hover{color:var(--accent2)}
+.hp-badge{font-size:.62rem;padding:2px 8px;border-radius:3px;background:var(--border);color:var(--text3)}
+.card-body,.hp-body{padding:10px 14px}
 /* Tables */
-table{width:100%;border-collapse:collapse;font-size:.78rem}
+table{width:100%;border-collapse:collapse;font-size:.75rem}
 th{
-  text-align:left;padding:8px 10px;color:var(--text4);font-weight:500;
-  font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;
-  border-bottom:1px solid var(--border);
+  text-align:left;padding:7px 10px;color:var(--text4);font-weight:500;
+  font-size:.65rem;text-transform:uppercase;letter-spacing:.04em;
+  border-bottom:1px solid var(--border);background:var(--bg3);
 }
-td{padding:8px 10px;border-bottom:1px solid var(--border);color:var(--text3)}
+td{padding:7px 10px;border-bottom:1px solid rgba(42,46,53,.5);color:var(--text3)}
 tr:last-child td{border-bottom:none}
-tr:hover td{background:rgba(59,130,246,.03)}
+tr:hover td{background:var(--bg3)}
 td strong{color:var(--text2)}
 /* Pump row disabled */
 tr.disabled td{opacity:.35}
@@ -299,11 +508,11 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
 }
 .pump-name-input:focus{outline:none}
 /* Badges */
-.badge{display:inline-block;padding:2px 10px;border-radius:4px;font-size:.65rem;font-weight:600}
-.badge.idle{background:rgba(75,85,99,.15);color:var(--text3);border:1px solid rgba(75,85,99,.2)}
-.badge.priming{background:rgba(245,158,11,.1);color:#f59e0b;border:1px solid rgba(245,158,11,.2)}
-.badge.dosing{background:rgba(59,130,246,.1);color:var(--blue);border:1px solid rgba(59,130,246,.2)}
-.badge.complete{background:rgba(16,185,129,.1);color:var(--green);border:1px solid rgba(16,185,129,.2)}
+.badge{display:inline-block;padding:2px 10px;border-radius:3px;font-size:.65rem;font-weight:600}
+.badge.idle{background:rgba(107,114,128,.15);color:var(--text4);border:1px solid rgba(107,114,128,.2)}
+.badge.priming{background:rgba(245,158,11,.1);color:var(--accent2);border:1px solid rgba(245,158,11,.2)}
+.badge.dosing{background:rgba(52,211,153,.1);color:var(--green);border:1px solid rgba(52,211,153,.2)}
+.badge.complete{background:rgba(52,211,153,.1);color:var(--green);border:1px solid rgba(52,211,153,.2)}
 .badge.error{background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.2)}
 /* Toggle switch */
 .toggle-sm{
@@ -315,7 +524,7 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
 }
 .toggle-sm .slider::before{
   content:'';position:absolute;height:12px;width:12px;left:3px;bottom:3px;
-  background:var(--text3);border-radius:50%;transition:.25s;
+  background:var(--text4);border-radius:50%;transition:.25s;
 }
 .toggle-sm input:checked+.slider{background:var(--green)}
 .toggle-sm input:checked+.slider::before{background:#fff;transform:translateX(14px)}
@@ -323,25 +532,27 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
 .pump-actions{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
 .pump-actions input{
   width:44px;padding:3px 6px;background:var(--bg);border:1px solid var(--border);
-  border-radius:4px;font-size:.7rem;text-align:center;color:var(--text2);
+  border-radius:3px;font-size:.7rem;text-align:center;color:var(--text2);
 }
-.pump-actions input:focus{outline:none;border-color:var(--blue)}
+.pump-actions input:focus{outline:none;border-color:var(--accent)}
 /* Buttons */
 .btn{
-  padding:4px 12px;border-radius:6px;font-size:.7rem;font-weight:500;
-  border:none;cursor:pointer;transition:all .15s;font-family:inherit;white-space:nowrap;
+  padding:5px 12px;border-radius:4px;font-size:.72rem;font-weight:500;
+  border:1px solid var(--border);cursor:pointer;transition:all .15s;font-family:inherit;white-space:nowrap;
+  background:var(--border);color:var(--text);
 }
-.btn-primary{background:var(--blue);color:#fff}
-.btn-primary:hover{background:#2563eb}
-.btn-success{background:var(--green);color:#fff}
+.btn:hover{background:var(--border2);border-color:var(--accent)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#14161b}
+.btn-primary:hover{background:var(--accent2);border-color:var(--accent2)}
+.btn-success{background:var(--green);border-color:var(--green);color:#14161b}
 .btn-success:hover{background:#059669}
-.btn-danger{background:var(--red);color:#fff}
+.btn-danger{background:var(--red);border-color:var(--red);color:#fff}
 .btn-danger:hover{background:#dc2626}
-.btn-warning{background:#f59e0b;color:#fff}
+.btn-warning{background:var(--accent2);border-color:var(--accent2);color:#14161b}
 .btn-warning:hover{background:#d97706}
-.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text3)}
-.btn-outline:hover{background:rgba(255,255,255,.03);border-color:var(--blue);color:var(--text2)}
-.btn-sm{padding:2px 8px;font-size:.65rem}
+.btn-outline{background:transparent;border:1px solid var(--border2);color:var(--text3)}
+.btn-outline:hover{background:var(--border);border-color:var(--accent);color:var(--text2)}
+.btn-sm{padding:3px 8px;font-size:.65rem}
 /* Schedules */
 .sched-per-pump{margin-bottom:8px}
 .sched-per-pump:last-child{margin-bottom:0}
@@ -353,10 +564,10 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
 .sched-per-pump .spp-header .spp-count{font-size:.62rem;color:var(--text4);font-weight:400}
 .sched-row{
   display:flex;align-items:center;justify-content:space-between;
-  padding:5px 0;border-bottom:1px solid var(--border);font-size:.75rem;
+  padding:5px 0;border-bottom:1px solid rgba(42,46,53,.3);font-size:.75rem;
 }
 .sched-row:last-child{border-bottom:none}
-.sched-time{font-weight:600;color:var(--blue);min-width:50px;font-feature-settings:'tnum'1}
+.sched-time{font-weight:600;color:var(--accent);min-width:50px;font-feature-settings:'tnum'1}
 .sched-detail{color:var(--text3);font-size:.72rem}
 .sched-days{color:var(--text4);font-size:.62rem}
 /* Reservoirs */
@@ -375,10 +586,11 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
 .reservoir-row .r-level .bar span{display:block;height:100%;border-radius:4px}
 .reservoir-row .r-pct{font-size:.7rem;font-weight:600;min-width:34px;text-align:right}
 /* Log */
-.log-list{font-size:.7rem;line-height:1.7;color:var(--text4);max-height:190px;overflow-y:auto}
-.log-list .log-time{color:var(--text5);margin-right:6px}
-.log-list .log-info{color:var(--text3)}
-.log-list .log-warn{color:#d97706}
+.log-list{font-family:'SF Mono','Fira Code',monospace;font-size:.68rem;line-height:1.6;color:var(--text4);max-height:190px;overflow-y:auto;padding:4px 0}
+.log-list .log-time{color:var(--text5);margin-right:4px}
+.log-list .log-info{color:var(--green)}
+.log-list .log-warn{color:var(--accent2)}
+.log-list .log-err{color:var(--red)}
 /* Apex card */
 .apex-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .apex-probe{padding:12px;border-radius:8px;background:var(--bg);border:1px solid var(--border)}
@@ -393,9 +605,6 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
 /* Quick actions */
 .qa-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 .qa-grid button{width:100%}
-.time-row{display:flex;gap:6px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
-.time-row input{flex:1;padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:.7rem;color:var(--text2);font-family:inherit}
-.time-row input:focus{outline:none;border-color:var(--blue)}
 .timezone-label{font-size:.65rem;color:var(--text4);margin-top:4px}
 .timezone-label select{background:var(--bg);border:1px solid var(--border);color:var(--text2);padding:2px 4px;border-radius:4px;font-size:.65rem;font-family:inherit}
 /* Modal */
@@ -404,24 +613,24 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
   display:none;align-items:center;justify-content:center;
 }
 .modal{
-  background:var(--bg2);border:1px solid var(--border);border-radius:14px;
-  padding:24px;max-width:420px;width:90%;box-shadow:0 16px 48px rgba(0,0,0,.4);
+  background:var(--bg2);border:1px solid var(--border);border-radius:8px;
+  padding:20px;max-width:420px;width:90%;box-shadow:0 16px 48px rgba(0,0,0,.4);
   max-height:90vh;overflow-y:auto;
 }
-.modal h3{font-size:1rem;font-weight:600;color:var(--text2);margin-bottom:16px}
-.modal label{font-size:.75rem;color:var(--text4);display:block;margin-bottom:4px}
+.modal h3{font-size:.9rem;font-weight:600;color:var(--text2);margin-bottom:14px}
+.modal label{font-size:.72rem;color:var(--text4);display:block;margin-bottom:4px}
 .modal input,.modal select{
-  width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);
-  border-radius:6px;color:var(--text2);font-size:.8rem;font-family:inherit;margin-bottom:12px;
+  width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);
+  border-radius:4px;color:var(--text2);font-size:.78rem;font-family:inherit;margin-bottom:10px;
 }
-.modal input:focus,.modal select:focus{outline:none;border-color:var(--blue)}
-.modal .day-chips{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px}
+.modal input:focus,.modal select:focus{outline:none;border-color:var(--accent)}
+.modal .day-chips{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px}
 .modal .day-chips .chip{
-  padding:4px 10px;border-radius:6px;font-size:.72rem;font-weight:500;
+  padding:4px 10px;border-radius:4px;font-size:.72rem;font-weight:500;
   border:1px solid var(--border);cursor:pointer;transition:all .15s;
   color:var(--text3);background:transparent;
 }
-.modal .day-chips .chip.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+.modal .day-chips .chip.active{background:var(--accent);color:#14161b;border-color:var(--accent)}
 .modal .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
 /* Pump count grid */
 .pump-count-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px}
@@ -430,8 +639,8 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
   border:2px solid var(--border);cursor:pointer;transition:all .15s;
   color:var(--text3);background:transparent;
 }
-.pump-count-grid .pc-chip:hover{border-color:var(--blue);color:var(--text2)}
-.pump-count-grid .pc-chip.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+.pump-count-grid .pc-chip:hover{border-color:var(--accent);color:var(--text2)}
+.pump-count-grid .pc-chip.active{background:var(--accent);color:#14161b;border-color:var(--accent)}
 @media(max-width:700px){
   body{padding:16px}
   .kpi-grid{grid-template-columns:repeat(2,1fr)}
@@ -469,7 +678,7 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
       <div style="flex:1"><label>Dose (mL)</label><input type="number" id="sVol" value="10" min="1" step="0.5"></div>
     </div>
     <div style="display:flex;gap:6px;margin-bottom:12px" id="ampmChips">
-      <span class="chip active" data-ampm="AM" style="padding:4px 14px;border-radius:6px;font-size:.72rem;font-weight:500;border:1px solid var(--border);cursor:pointer;background:var(--blue);color:#fff;border-color:var(--blue)">AM</span>
+      <span class="chip active" data-ampm="AM" style="padding:4px 14px;border-radius:6px;font-size:.72rem;font-weight:500;border:1px solid var(--border);cursor:pointer;background:var(--accent);color:#14161b;border-color:var(--accent)">AM</span>
       <span class="chip" data-ampm="PM" style="padding:4px 14px;border-radius:6px;font-size:.72rem;font-weight:500;border:1px solid var(--border);cursor:pointer;color:var(--text3);background:transparent">PM</span>
     </div>
     <label style="margin-top:4px">Days</label>
@@ -529,8 +738,8 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
 <div class="app">
   <div class="top-bar">
     <div class="brand">
-      <h1>Pro-Simple <span>|</span> Dosing Controller</h1>
-      <div class="tag">ESP32 &middot; v1.0.0 &middot; <span id="onlineDot" style="color:var(--green)">&#9679;</span> <span id="onlineLabel">Online</span></div>
+      <h1>PRO-SIMPLE <span>| DOSING CONTROLLER</span></h1>
+      <div class="tag"><span class="hmi-led on" id="onlineDot"></span> <span id="onlineLabel">Online</span> &middot; <span id="ipDisplay">--</span></div>
     </div>
     <div class="user-info">
       <div class="theme-toggle-wrap">
@@ -539,33 +748,35 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
           <div class="knob"></div>
         </div>
       </div>
-      <div class="header-clock"><span id="clockDisplay">12:00:00 PM</span><span id="dateDisplay">Jan 1, 2026</span></div>
-      <span id="ipDisplay">--</span>
-      <div class="avatar">PS</div>
+      <div class="header-clock"><span id="clockDisplay">12:00:00 PM</span><span id="dateDisplay">Jan 1, 2026</span><span id="deviceTimeDisplay" style="font-size:.62rem;color:var(--text4)">device clock: --</span></div>
     </div>
   </div>
 
-  <!-- Row 1: KPI -->
+  <!-- Row 1: KPI Gauges -->
   <div class="kpi-grid">
     <div class="kpi-card">
       <div class="kpi-label">System Uptime</div>
-      <div class="kpi-value" id="kpiUptime">--</div>
-      <div class="kpi-change up" id="kpiUptimeSub">--</div>
+      <div class="kpi-value" id="kpiUptime">--<span class="kpi-unit">h</span></div>
+      <div class="kpi-sub" id="kpiUptimeSub">--</div>
+      <div class="kpi-bar"><span style="width:0%" id="kpiUptimeBar"></span></div>
     </div>
-    <div class="kpi-card">
+    <div class="kpi-card green">
       <div class="kpi-label">Total Dispensed</div>
-      <div class="kpi-value" id="kpiVolume">--</div>
-      <div class="kpi-change up" id="kpiVolumeSub">--</div>
+      <div class="kpi-value" id="kpiVolume">--<span class="kpi-unit">mL</span></div>
+      <div class="kpi-sub" id="kpiVolumeSub">--</div>
+      <div class="kpi-bar"><span style="width:0%" id="kpiVolumeBar"></span></div>
+    </div>
+    <div class="kpi-card blue">
+      <div class="kpi-label">Active Pumps</div>
+      <div class="kpi-value" id="kpiDoses">--<span class="kpi-unit">/4</span></div>
+      <div class="kpi-sub" id="kpiDosesSub">--</div>
+      <div class="kpi-bar"><span style="width:0%" id="kpiDosesBar"></span></div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">Total Doses</div>
-      <div class="kpi-value" id="kpiDoses">--</div>
-      <div class="kpi-change up" id="kpiDosesSub">--</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Active Alarms</div>
-      <div class="kpi-value" id="kpiAlarms">0</div>
-      <div class="kpi-change" style="color:var(--text4);visibility:hidden">-</div>
+      <div class="kpi-label">WiFi Signal</div>
+      <div class="kpi-value" id="kpiSignal">--<span class="kpi-unit">dBm</span></div>
+      <div class="kpi-sub" id="kpiSignalSub">--</div>
+      <div class="kpi-bar"><span style="width:0%" id="kpiSignalBar"></span></div>
     </div>
   </div>
 
@@ -619,12 +830,11 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
           <button class="btn btn-outline" onclick="reboot()">Reboot</button>
           <button class="btn btn-outline" onclick="syncNTP()">Sync NTP</button>
           <button class="btn btn-outline" onclick="openPumpCountModal()">Pump Config</button>
+          <button class="btn btn-outline" onclick="exportConfig()">&#11015; Backup</button>
+          <button class="btn btn-outline" onclick="document.getElementById('configFileInput').click()">&#11014; Restore</button>
+          <input type="file" id="configFileInput" accept=".json,application/json" style="display:none" onchange="importConfig(this)">
         </div>
-        <div class="time-row">
-          <input type="text" id="manualTime" placeholder="YYYY-MM-DD HH:MM">
-          <button class="btn btn-primary btn-sm" onclick="setManualTime()">Set</button>
-        </div>
-        <div class="timezone-label">&#9200; <select id="tzSelect" onchange="changeTimezone(this.value)"></select></div>
+        <div class="timezone-label">&#9200; <span id="tzLabelText"></span> <select id="tzSelect" onchange="changeTimezone(this.value)"></select></div>
       </div>
     </div>
 </div>
@@ -634,13 +844,17 @@ const API='/api?path=';
 const MAX_SCHED_PER_PUMP=4;
 const defaultPins=[32,33,25,26,27,14,12,13];
 const timezones=[
-  'PST (UTC-8)','MST (UTC-7)','CST (UTC-6)','EST (UTC-5)',
+  'PST (UTC-8)','PDT (UTC-7)',
+  'MST (UTC-7)','MDT (UTC-6)',
+  'CST (UTC-6)','CDT (UTC-5)',
+  'EST (UTC-5)','EDT (UTC-4)',
   'AST (UTC-4)','BRT (UTC-3)','UTC','CET (UTC+1)','EET (UTC+2)',
   'MSK (UTC+3)','GST (UTC+4)','IST (UTC+5:30)','ICT (UTC+7)',
   'CST China (UTC+8)','JST (UTC+9)','AEST (UTC+10)','NZST (UTC+12)'
 ];
 let currentTimezone='PST (UTC-8)';
-let pumps=[], schedules=[], pumpCount=4;
+let pumps=[], schedules=[], pumpCount=parseInt(localStorage.getItem('pumpCount'))||4;
+let doseVols={};
 
 function qs(s){return document.querySelector(s)}
 function qsa(s){return document.querySelectorAll(s)}
@@ -685,7 +899,39 @@ function populateTimezone(){
   const sel=document.getElementById('tzSelect');
   sel.innerHTML=timezones.map(t=>'<option value="'+t+'"'+(t===currentTimezone?' selected':'')+'>'+t+'</option>').join('');
 }
-function changeTimezone(val){currentTimezone=val;toast('Timezone set to '+val,'success')}
+function tzOffsetLabel(min){
+  const sign=min<0?'-':'+';
+  const abs=Math.abs(min);
+  const h=Math.floor(abs/60), m=abs%60;
+  return 'UTC'+sign+h+(m?':'+String(m).padStart(2,'0'):'');
+}
+function tzLabelToMin(label){
+  const m=label.match(/UTC([+-]\d{1,2}(?::\d{2})?)/);
+  if(!m)return 0;
+  const neg=m[1][0]==='-';
+  const parts=m[1].slice(1).split(':').map(Number);
+  let min=parts[0]*60+(parts[1]||0);
+  return neg?-min:min;
+}
+function changeTimezone(val){
+  currentTimezone=val;
+  const min=tzLabelToMin(val);
+  fetch('/api/timezone?min='+min).then(r=>r.json()).then(()=>{
+    toast('Timezone set to '+val,'success');
+  });
+}
+function applyDeviceTimezone(offsetMin){
+  let best=timezones[0];
+  let bestMin=tzLabelToMin(timezones[0]);
+  for(const t of timezones){
+    const m=tzLabelToMin(t);
+    if(Math.abs(m-offsetMin)<Math.abs(bestMin-offsetMin)){best=t;bestMin=m}
+  }
+  currentTimezone=best;
+  const sel=document.getElementById('tzSelect');
+  sel.value=best;
+  document.getElementById('tzLabelText').textContent=tzOffsetLabel(offsetMin)+' ('+best.split(' ')[0]+')';
+}
 
 // === Render ===
 function renderAll(){renderPumps();renderSchedules();renderReservoirs()}
@@ -709,7 +955,7 @@ function renderPumps(){
       '<td>'+p.rate.toFixed(1)+' mL/min</td>'+
       '<td>'+p.totalDosed.toFixed(0)+' mL</td>'+
       '<td><span class="badge '+stateCls+'">'+stateTxt+'</span></td>'+
-      '<td><div class="pump-actions"><input type="number" value="10" id="pumpVol'+i+'" style="width:42px"><button class="btn btn-success btn-sm" onclick="dosePump('+i+')">Dose</button><button class="btn btn-primary btn-sm" onclick="calibratePump('+i+')">Cal</button><button class="btn btn-warning btn-sm" onclick="primePump('+i+')">Prime</button></div></td>';
+      '<td><div class="pump-actions"><input type="number" value="'+(doseVols[i]||10)+'" id="pumpVol'+i+'" style="width:42px" oninput="doseVols['+i+']=this.value"><button class="btn btn-success btn-sm" onclick="dosePump('+i+')">Dose</button><button class="btn btn-primary btn-sm" onclick="calibratePump('+i+')">Cal</button><button class="btn btn-warning btn-sm" onclick="primePump('+i+')">Prime</button></div></td>';
     tbody.appendChild(tr);
   }
 }
@@ -820,6 +1066,7 @@ function applyPumpCount(){
   const n=parseInt(document.querySelector('#pumpCountGrid .pc-chip.active').dataset.n);
   if(n===pumpCount){closePumpCountModal();return}
   pumpCount=n;
+  localStorage.setItem('pumpCount',n);
   closePumpCountModal();
   renderAll();
   toast('Pump count set to '+n,'success');
@@ -871,7 +1118,7 @@ function openSchedModal(){
 function closeSchedModal(){document.getElementById('schedModal').style.display='none'}
 document.getElementById('schedModal').addEventListener('click',function(e){if(e.target===this)closeSchedModal()});
 qsa('#dayChips .chip').forEach(c=>{c.addEventListener('click',function(){this.classList.toggle('active')})});
-qsa('#ampmChips .chip').forEach(c=>{c.addEventListener('click',function(){qsa('#ampmChips .chip').forEach(x=>{x.style.background='transparent';x.style.color='var(--text3)';x.style.borderColor='var(--border)'});this.style.background='var(--blue)';this.style.color='#fff';this.style.borderColor='var(--blue)'})});
+qsa('#ampmChips .chip').forEach(c=>{c.addEventListener('click',function(){qsa('#ampmChips .chip').forEach(x=>{x.style.background='transparent';x.style.color='var(--text3)';x.style.borderColor='var(--border)'});this.style.background='var(--accent)';this.style.color='#14161b';this.style.borderColor='var(--accent)'})});
 function saveSchedule(){
   const pump=parseInt(document.getElementById('sPump').value);
   let h=parseInt(document.getElementById('sHour').value)||8;
@@ -898,16 +1145,17 @@ function renderReservoirs(){
   c.innerHTML='';
   const colorsR=['var(--blue)','var(--green)','#f59e0b','#8b5cf6','#ec4899','#14b8a6','#f97316','#6366f1'];
   for(let i=0;i<pumpCount;i++){
-    const p=pumps[i]||{name:'Pump '+(i+1),capacity:5000,reservoirLevel:100};
-    const pct=p.reservoirLevel===0?0:(p.reservoirLevel||100);
-    const col=colorsR[i%colorsR.length];
+    const p=pumps[i]||{name:'Pump '+(i+1),capacity:5000,reservoirLevel:100,reservoirRemaining:5000};
     const cap=p.capacity||5000;
+    const rem=typeof p.reservoirRemaining==='number'?p.reservoirRemaining:cap;
+    const pct=cap>0?Math.round(rem/cap*100):0;
+    const col=colorsR[i%colorsR.length];
     const div=document.createElement('div');
     div.className='reservoir-row';
     div.innerHTML=
       '<div class="r-name"><span class="r-name-text" onclick="editReservoirName(this,'+i+')">'+p.name+'</span><div class="r-meta"><span class="r-cap-text" onclick="editReservoirCap(this,'+i+')">'+cap.toFixed(0)+' mL</span> capacity</div></div>'+
       '<div class="r-level"><div class="bar"><span style="width:'+pct+'%;background:'+col+'"></span></div></div>'+
-      '<span class="r-pct" style="color:'+col+'">'+pct+'%</span>';
+      '<span class="r-pct" style="color:'+col+'">'+pct+'% <small>('+rem.toFixed(0)+' mL)</small></span>';
     c.appendChild(div);
   }
 }
@@ -999,6 +1247,7 @@ function openApexModal(){
       html+='<label>Port</label><input type="number" class="apex-port" data-unit="'+u+'" value="80" min="1" max="65535">';
       html+='<label>Username</label><input type="text" class="apex-user" data-unit="'+u+'" value="admin" placeholder="admin">';
       html+='<label>Password</label><input type="password" class="apex-pass" data-unit="'+u+'" value="" placeholder="password">';
+      html+='<label>Sync interval (minutes)</label><input type="number" class="apex-poll" data-unit="'+u+'" value="'+Math.round((unit.pollIntervalMs||3600000)/60000)+'" min="1" max="1440">';
       html+='<div style="display:flex;align-items:center;gap:8px;margin-top:6px">';
       html+='<input type="checkbox" class="apex-enabled" data-unit="'+u+'" style="width:auto"'+(unit.enabled?' checked':'')+'>';
       html+='<label style="margin:0;font-size:.8rem">Enable Apex '+(u+1)+'</label></div>';
@@ -1028,6 +1277,7 @@ function saveApexConfig(){
   const users=document.querySelectorAll('.apex-user');
   const passes=document.querySelectorAll('.apex-pass');
   const enableds=document.querySelectorAll('.apex-enabled');
+  const polls=document.querySelectorAll('.apex-poll');
   let pending=0,ok=true;
   for(let u=0;u<ips.length;u++){
     const ip=ips[u].value.trim();
@@ -1036,12 +1286,13 @@ function saveApexConfig(){
     const user=users[u].value.trim();
     const pass=passes[u].value;
     const enabled=enableds[u].checked?'true':'false';
+    const pollMin=parseInt(polls[u].value)||60;
     // compute probe mask
     const toggles=document.querySelectorAll('.apex-probe-toggle[data-unit="'+u+'"]');
     let mask=0;
     toggles.forEach(function(t,i){if(t.checked)mask|=1<<i});
     pending++;
-    let url='/api/apex?unit='+u+'&ip='+encodeURIComponent(ip)+'&port='+port+'&enabled='+enabled+'&probeMask='+mask;
+    let url='/api/apex?unit='+u+'&ip='+encodeURIComponent(ip)+'&port='+port+'&enabled='+enabled+'&probeMask='+mask+'&pollIntervalMs='+(pollMin*60000);
     if(user)url+='&username='+encodeURIComponent(user);
     if(pass)url+='&password='+encodeURIComponent(pass);
     fetch(url).then(r=>r.json()).then(d=>{
@@ -1058,20 +1309,46 @@ function saveApexConfig(){
 // === Logs ===
 function renderLogs(data){
   const c=document.getElementById('logContainer');
-  c.innerHTML=data.slice(-9).map(l=>'<div><span class="log-time">--</span><span class="log-info">'+l+'</span></div>').join('');
+  c.innerHTML=data.slice(-9).map(function(l){
+    let cls='log-info';
+    if(l.indexOf('[W]')>=0)cls='log-warn';
+    else if(l.indexOf('[E]')>=0)cls='log-err';
+    return '<div><span class="log-time">[...]</span><span class="'+cls+'">'+l+'</span></div>';
+  }).join('');
 }
 
 // === Status ===
 function renderStatus(data){
-  document.getElementById('kpiUptime').textContent=data.uptime.toFixed(1)+'h';
   const days=Math.floor(data.uptime/24);
+  document.getElementById('kpiUptime').innerHTML=data.uptime.toFixed(1)+'<span class="kpi-unit">h</span>';
   document.getElementById('kpiUptimeSub').textContent=days+' days';
-  document.getElementById('kpiVolume').textContent=data.totalVolume.toFixed(0)+' mL';
-  document.getElementById('kpiDoses').textContent=data.totalDoses;
-  document.getElementById('kpiAlarms').textContent='0';
-  document.getElementById('ipDisplay').textContent=data.ip;
-  document.getElementById('onlineDot').style.color=data.wifiConnected?'var(--green)':'var(--red)';
-  document.getElementById('onlineLabel').textContent=data.wifiConnected?'Online':'Offline';
+  document.getElementById('kpiUptimeBar').style.width=Math.min(data.uptime/10,100)+'%';
+  const vol=data.totalVolume||0;
+  document.getElementById('kpiVolume').innerHTML=vol>=1000?(vol/1000).toFixed(1)+'<span class="kpi-unit">L</span>':vol.toFixed(0)+'<span class="kpi-unit">mL</span>';
+  document.getElementById('kpiVolumeSub').textContent=vol.toFixed(0)+' mL total';
+  document.getElementById('kpiVolumeBar').style.width=Math.min(vol/1000*100,100)+'%';
+  let activePumps=0;for(let i=0;i<pumpCount;i++){if(pumps[i]&&pumps[i].active!==false)activePumps++}
+  document.getElementById('kpiDoses').innerHTML=activePumps+'<span class="kpi-unit">/'+pumpCount+'</span>';
+  document.getElementById('kpiDosesSub').textContent=pumpCount+' channels';
+  document.getElementById('kpiDosesBar').style.width=(pumpCount>0?activePumps/pumpCount*100:0)+'%';
+  const rssi=typeof data.rssi==='number'?data.rssi:0;
+  const pct=Math.max(0,Math.min(100,Math.round((rssi+90)*100/60)));
+  document.getElementById('kpiSignal').innerHTML=rssi+'<span class="kpi-unit">dBm</span>';
+  document.getElementById('kpiSignalSub').textContent=data.wifiConnected?'Connected':'Disconnected';
+  document.getElementById('kpiSignalBar').style.width=pct+'%';
+  const dot=document.getElementById('onlineDot');
+  const lbl=document.getElementById('onlineLabel');
+  if(dot){dot.className='hmi-led '+(data.wifiConnected?'on':'off')}
+  if(lbl){lbl.textContent=data.wifiConnected?'Online':'Offline'}
+  const ipEl=document.getElementById('ipDisplay');
+  if(ipEl)ipEl.textContent=data.ip||'--';
+  const dtEl=document.getElementById('deviceTimeDisplay');
+  if(dtEl){
+    const synced=data.clockSynced;
+    dtEl.textContent='device clock: '+(data.deviceTime||'--')+(synced?'':' (NOT synced!)');
+    dtEl.style.color=synced?'var(--text4)':'var(--red)';
+  }
+  if(typeof data.tzOffsetMin==='number'&&data.tzOffsetMin!==window._lastTz){window._lastTz=data.tzOffsetMin;applyDeviceTimezone(data.tzOffsetMin)}
 }
 
 // === Quick Actions ===
@@ -1102,18 +1379,43 @@ function syncNTP(){
   toast('Syncing NTP...','info');
   fetch('/api/ntp').then(()=>{toast('NTP sync initiated','success')});
 }
-function setManualTime(){
-  const val=document.getElementById('manualTime').value;
-  if(!val){toast('Enter time','error');return}
-  fetch('/api/time?t='+encodeURIComponent(val)).then(()=>{toast('Time set: '+val,'success')});
+function exportConfig(){
+  toast('Downloading backup...','info');
+  fetch('/api/config/export').then(r=>r.json()).then(data=>{
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+    const a=document.createElement('a');
+    const d=new Date();
+    const stamp=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    a.href=URL.createObjectURL(blob);
+    a.download='pro-simple-config-'+stamp+'.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast('Backup downloaded','success');
+  }).catch(()=>toast('Backup failed','error'));
+}
+function importConfig(input){
+  const file=input.files[0];
+  if(!file)return;
+  const reader=new FileReader();
+  reader.onload=function(){
+    toast('Restoring config...','info');
+    fetch('/api/config/import',{method:'POST',headers:{'Content-Type':'application/json'},body:reader.result})
+      .then(r=>r.json()).then(d=>{
+        if(d.ok){toast('Config restored','success');loadAll()}
+        else toast('Restore failed: '+(d.error||'unknown'),'error');
+      }).catch(()=>toast('Restore failed','error'));
+  };
+  reader.readAsText(file);
+  input.value='';
 }
 
 // === Load All ===
 function loadAll(){
   // skip if inline edit is active (input focused)
   if(document.querySelector('.pump-name-input'))return;
+  if(document.activeElement&&document.activeElement.id&&document.activeElement.id.indexOf('pumpVol')===0)return;
   fetchJSON(API+'status',renderStatus);
-  fetchJSON(API+'pumps',function(data){pumps=data;pumpCount=data.length;renderPumps();renderReservoirs()});
+  fetchJSON(API+'pumps',function(data){pumps=data;renderPumps();renderReservoirs()});
   fetchJSON(API+'schedules',function(data){schedules=data;renderSchedules()});
   fetchJSON(API+'logs',renderLogs);
   fetchJSON(API+'apex',renderApex);

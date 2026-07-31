@@ -12,9 +12,15 @@ ESP32-based multi-channel peristaltic pump controller with a professional web da
 - **Calibration** — timed run, enter measured volume, new rate calculated and saved
 - **Pump count** — dynamically switch between 1-8 pumps via dashboard
 - **Neptune Apex Classic integration** — dual-unit support, auto-poll `/cgi-bin/status.xml` via Basic auth, per-probe visibility toggles
-- **Web dashboard** — dark/light theme, live KPI cards, inline editing, activity log, manual clock set, timezone selector
+- **Web dashboard** — dark/light theme, live KPI cards, inline editing, activity log, timezone selector
 - **WiFi AP fallback** — configures as access point if station connection fails
 - **EEPROM persistence** — pump config, schedules, and Apex settings saved with CRC16 validation
+- **Config backup/restore** — download/upload full settings as a JSON file from the dashboard Quick Actions card
+
+## Requirements
+
+- Arduino ESP32 core (`esp32:esp32`)
+- **ArduinoJson** library (used by config import) — install via Library Manager or `arduino-cli lib install ArduinoJson`
 
 ## Hardware
 
@@ -134,6 +140,10 @@ pio device monitor
 | `GET /api/reset` | Reset all totals |
 | `GET /api/refill` | Reset all reservoirs to 100% |
 | `GET /api/apex?unit=0&ip=...&enabled=true&probeMask=15` | Save Apex config |
+| `GET /api/config/export` | Download full config as JSON backup |
+| `POST /api/config/import` | Restore config from uploaded JSON backup |
+| `GET /api/ntp` | Trigger NTP resync |
+| `GET /api/timezone?min=-480` | Set timezone offset (minutes) |
 
 State codes: `0=Idle, 1=Priming, 2=Dosing, 3=Complete, 4=Error`
 
@@ -162,5 +172,6 @@ Pro-Simple/
 
 - Dashboard is embedded in `web_server.cpp` as a raw string literal — no external files needed
 - Polling interval: 5 seconds (frontend JS)
-- Clock is client-side only; timezone selector is cosmetic (label shown only)
+- Clock is client-side only; the timezone selector persists to the device (`/api/timezone`) and drives the NTP-based scheduler so doses fire at local time
+- Time is synced via NTP (`pool.ntp.org`) on boot and on demand via `/api/ntp`; there is no manual time setting
 - Apex data is cached on the ESP32 and served from memory; probes are filtered by `probeMask` before sending to dashboard

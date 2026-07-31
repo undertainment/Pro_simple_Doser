@@ -24,6 +24,10 @@ private:
   static void _handleResetTotals();
   static void _handleRefill();
   static void _handleApexConfig();
+  static void _handleNTP();
+  static void _handleTimeZone();
+  static void _handleConfigExport();
+  static void _handleConfigImport();
   static void _handleNotFound();
 
   static String _buildDashboardHTML();

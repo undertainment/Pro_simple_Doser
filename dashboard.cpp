@@ -5,6 +5,7 @@
 #include "apex.h"
 #include "logger.h"
 #include <WiFi.h>
+#include <time.h>
 
 SystemStatus Dashboard::getStatus() {
   SystemStatus s;
@@ -35,6 +36,19 @@ SystemStatus Dashboard::getStatus() {
 
 String Dashboard::renderStatusJSON() {
   SystemStatus s = getStatus();
+  bool synced = Scheduler::clockSynced();
+  time_t now = time(nullptr);
+  struct tm* ti = synced ? localtime(&now) : nullptr;
+  char tbuf[32];
+  if (synced && ti) {
+    snprintf(tbuf, sizeof(tbuf), "%04d-%02d-%02d %02d:%02d",
+             ti->tm_year + 1900, ti->tm_mon + 1, ti->tm_mday,
+             ti->tm_hour, ti->tm_min);
+  } else {
+    strncpy(tbuf, "not synced", sizeof(tbuf) - 1);
+    tbuf[sizeof(tbuf) - 1] = '\0';
+  }
+
   String json = F("{");
   json += String(F("\"uptime\":")) + String(s.uptimeHours, 1) + F(",");
   json += String(F("\"totalDoses\":")) + String(s.totalDoses) + F(",");
@@ -42,6 +56,9 @@ String Dashboard::renderStatusJSON() {
   json += String(F("\"freeHeap\":")) + String(s.freeHeap) + F(",");
   json += String(F("\"rssi\":")) + String(s.rssi) + F(",");
   json += String(F("\"wifiConnected\":")) + String(s.wifiConnected ? F("true") : F("false")) + F(",");
+  json += String(F("\"tzOffsetMin\":")) + String(Scheduler::timeZoneOffsetMin()) + F(",");
+  json += String(F("\"clockSynced\":")) + String(synced ? F("true") : F("false")) + F(",");
+  json += String(F("\"deviceTime\":\"")) + String(tbuf) + F("\",");
   json += String(F("\"ip\":\"")) + String(s.ip) + F("\"");
   json += F("}");
   return json;
@@ -62,6 +79,7 @@ String Dashboard::renderPumpJSON() {
     json += String(F("\"state\":")) + String((int)Dosing::getState(i)) + F(",");
     json += String(F("\"pin\":")) + String(cfg->pin) + F(",");
     json += String(F("\"capacity\":")) + String(cfg->capacity, 1) + F(",");
+    json += String(F("\"reservoirRemaining\":")) + String(Pump::reservoirRemaining(i), 1) + F(",");
     json += String(F("\"reservoirLevel\":")) + String(cfg->reservoirLevel);
     json += F("}");
   }
@@ -110,6 +128,7 @@ String Dashboard::renderApexJSON() {
     json += String(F("\"connected\":")) + String(Apex::isConnected(u) ? F("true") : F("false")) + F(",");
     json += String(F("\"lastUpdate\":")) + String(Apex::lastUpdate(u)) + F(",");
     json += String(F("\"probeMask\":")) + String(Apex::getConfig(u).probeMask) + F(",");
+    json += String(F("\"pollIntervalMs\":")) + String(Apex::pollIntervalMs(u)) + F(",");
     json += String(F("\"probes\":["));
     for (uint8_t i = 0; i < Apex::probeCount(u); i++) {
       const ApexProbe* p = Apex::getProbes(u);

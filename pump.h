@@ -18,12 +18,17 @@ public:
   static void setConfig(uint8_t index, const PumpConfig& cfg);
   static void resetTotal(uint8_t index);
 
+  static float reservoirRemaining(uint8_t index);
+  static void setReservoirRemaining(uint8_t index, float ml);
+  static void refillAll();
+
   static uint8_t count() { return PUMP_COUNT; }
 
 private:
   static PumpConfig _pumps[PUMP_COUNT];
   static bool _running[PUMP_COUNT];
   static unsigned long _startMillis[PUMP_COUNT];
+  static float _reservoirRemaining[PUMP_COUNT];
 };
 
 #endif

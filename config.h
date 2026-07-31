@@ -35,10 +35,20 @@
 #define APEX_MAX_PROBES        8
 
 // =====================================================
-// Scheduling
+// Scheduling & Time
 // =====================================================
 #define MAX_SCHEDULES      16
 #define SCHEDULE_CHECK_MS  1000
+#define NTP_RETRY_MS       30000
+
+// NTP time sync — used so scheduled doses fire at your local time.
+// DEFAULT_TZ_OFFSET_MIN is the local timezone offset in minutes
+// (e.g. PDT = UTC-7 -> -420, PST = UTC-8 -> -480, EST = UTC-5 -> -300, UTC = 0).
+#define NTP_SERVER         "pool.ntp.org"
+#define DEFAULT_TZ_OFFSET_MIN  -420
+
+// Apex Classic polling — default interval per unit (can be overridden per-unit in UI)
+// Minimum 10000 ms (10 sec); stored in EEPROM v5 as apexPollMs[]
 
 // =====================================================
 // Storage (EEPROM)

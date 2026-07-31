@@ -19,6 +19,8 @@ struct StorageBlock {
   PumpConfig    pumps[PUMP_COUNT];
   Schedule      schedules[MAX_SCHEDULES];
   ApexConfig    apex[APEX_UNIT_COUNT];
+  int16_t       tzOffsetMin;
+  uint32_t      apexPollMs[APEX_UNIT_COUNT];  // v5+
 };
 
 bool Storage::_dirty = false;
@@ -33,7 +35,7 @@ void Storage::save() {
   StorageBlock block;
   memset(&block, 0, sizeof(block));
   block.header.magic    = MAGIC;
-  block.header.version  = 3;
+  block.header.version  = 5;
   block.header.scheduleCount = Scheduler::scheduleCount();
 
   for (uint8_t i = 0; i < PUMP_COUNT; i++) {
@@ -48,7 +50,10 @@ void Storage::save() {
 
   for (uint8_t u = 0; u < APEX_UNIT_COUNT; u++) {
     block.apex[u] = Apex::getConfig(u);
+    block.apexPollMs[u] = Apex::pollIntervalMs(u);
   }
+
+  block.tzOffsetMin = Scheduler::timeZoneOffsetMin();
 
   block.header.crc = _crc16((uint8_t*)&block.pumps, sizeof(block) - sizeof(StorageHeader));
   EEPROM.put(0, block);
@@ -75,6 +80,7 @@ void Storage::load() {
 
   for (uint8_t i = 0; i < PUMP_COUNT; i++) {
     Pump::setConfig(i, block.pumps[i]);
+    Pump::setReservoirRemaining(i, block.pumps[i].capacity * block.pumps[i].reservoirLevel / 100.0f);
   }
 
   for (uint8_t i = 0; i < block.header.scheduleCount; i++) {
@@ -84,6 +90,16 @@ void Storage::load() {
   if (block.header.version >= 3) {
     for (uint8_t u = 0; u < APEX_UNIT_COUNT; u++) {
       Apex::setConfig(u, block.apex[u]);
+    }
+  }
+
+  if (block.header.version >= 4) {
+    Scheduler::setTimeZoneOffsetMin(block.tzOffsetMin);
+  }
+
+  if (block.header.version >= 5) {
+    for (uint8_t u = 0; u < APEX_UNIT_COUNT; u++) {
+      if (block.apexPollMs[u] >= 10000) Apex::setPollIntervalMs(u, block.apexPollMs[u]);
     }
   }
 
@@ -107,6 +123,10 @@ void Storage::getPumpConfig(uint8_t index, PumpConfig& cfg) {
 
 void Storage::setPumpConfig(uint8_t index, const PumpConfig& cfg) {
   Pump::setConfig(index, cfg);
+  _dirty = true;
+}
+
+void Storage::markDirty() {
   _dirty = true;
 }
 

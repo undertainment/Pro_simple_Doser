@@ -18,6 +18,9 @@ public:
   static const ApexProbe* getProbes(uint8_t unit);
   static uint8_t probeCount(uint8_t unit);
 
+  static void setPollIntervalMs(uint8_t unit, uint32_t ms);
+  static uint32_t pollIntervalMs(uint8_t unit);
+
 private:
   struct UnitState {
     ApexConfig   config;
@@ -26,6 +29,7 @@ private:
     unsigned long lastUpdate;
     unsigned long lastPoll;
     bool         connected;
+    uint32_t     pollMs;
   };
 
   static UnitState _units[APEX_UNIT_COUNT];

@@ -16,6 +16,7 @@ void Apex::init() {
     _units[u].lastUpdate = 0;
     _units[u].lastPoll = -APEX_POLL_INTERVAL_MS;
     _units[u].connected = false;
+    _units[u].pollMs = APEX_POLL_INTERVAL_MS;
   }
   Logger::info(F("Apex Classic: 2-unit client initialized"));
 }
@@ -25,7 +26,7 @@ void Apex::loop() {
   for (uint8_t u = 0; u < APEX_UNIT_COUNT; u++) {
     UnitState& unit = _units[u];
     if (!unit.config.enabled || unit.config.ip[0] == '\0') continue;
-    if (now - unit.lastPoll < APEX_POLL_INTERVAL_MS) continue;
+    if (now - unit.lastPoll < unit.pollMs) continue;
     unit.lastPoll = now;
     _poll(u);
   }
@@ -187,4 +188,12 @@ void Apex::_poll(uint8_t unitIdx) {
   } else {
     Logger::warn(String(F("Apex ")) + unitIdx + F(": no <probe> elements found"));
   }
+}
+
+void Apex::setPollIntervalMs(uint8_t unit, uint32_t ms) {
+  if (unit < APEX_UNIT_COUNT && ms >= 10000) _units[unit].pollMs = ms;
+}
+
+uint32_t Apex::pollIntervalMs(uint8_t unit) {
+  return unit < APEX_UNIT_COUNT ? _units[unit].pollMs : APEX_POLL_INTERVAL_MS;
 }

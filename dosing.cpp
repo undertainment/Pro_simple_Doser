@@ -1,5 +1,6 @@
 #include "dosing.h"
 #include "pump.h"
+#include "storage.h"
 #include "logger.h"
 
 DoseJob Dosing::_jobs[PUMP_COUNT];
@@ -87,6 +88,7 @@ uint8_t Dosing::activeJobCount() {
 void Dosing::_completeJob(uint8_t i) {
   _jobs[i].state = DoseState::Complete;
   Pump::stop(i, true);
+  Storage::markDirty();
 
   Logger::info(String(F("Dose complete: pump=")) + i +
                F(" vol=") + _jobs[i].volumeML + F("mL"));

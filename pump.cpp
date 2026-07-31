@@ -4,6 +4,7 @@
 PumpConfig Pump::_pumps[PUMP_COUNT];
 bool Pump::_running[PUMP_COUNT];
 unsigned long Pump::_startMillis[PUMP_COUNT];
+float Pump::_reservoirRemaining[PUMP_COUNT];
 
 static const uint8_t defaultPins[PUMP_COUNT] = {
   PIN_PUMP_1, PIN_PUMP_2, PIN_PUMP_3, PIN_PUMP_4
@@ -24,6 +25,7 @@ void Pump::init() {
     _pumps[i].runTimeSec   = 0;
     _pumps[i].capacity     = 5000.0f;
     _pumps[i].reservoirLevel = 100;
+    _reservoirRemaining[i] = _pumps[i].capacity;
     _running[i]            = false;
     _startMillis[i]        = 0;
 
@@ -62,6 +64,14 @@ void Pump::stop(uint8_t index, bool complete) {
   if (complete && _pumps[index].rateMLperMin > 0) {
     float dosed = (elapsed / 60.0f) * _pumps[index].rateMLperMin;
     _pumps[index].totalDosed += dosed;
+
+    _reservoirRemaining[index] -= dosed;
+    if (_reservoirRemaining[index] < 0) _reservoirRemaining[index] = 0;
+
+    if (_pumps[index].capacity > 0) {
+      _pumps[index].reservoirLevel =
+          (uint8_t)constrain((_reservoirRemaining[index] / _pumps[index].capacity) * 100.0f, 0, 100);
+    }
   }
 }
 
@@ -77,7 +87,37 @@ PumpConfig* Pump::getConfig(uint8_t index) {
 
 void Pump::setConfig(uint8_t index, const PumpConfig& cfg) {
   if (index >= PUMP_COUNT) return;
+  float ratio = 1.0f;
+  if (_pumps[index].capacity > 0) {
+    ratio = _reservoirRemaining[index] / _pumps[index].capacity;
+  }
   _pumps[index] = cfg;
+  _reservoirRemaining[index] = cfg.capacity * ratio;
+  if (_reservoirRemaining[index] < 0) _reservoirRemaining[index] = 0;
+  if (_reservoirRemaining[index] > cfg.capacity) _reservoirRemaining[index] = cfg.capacity;
+}
+
+float Pump::reservoirRemaining(uint8_t index) {
+  if (index >= PUMP_COUNT) return 0;
+  return _reservoirRemaining[index];
+}
+
+void Pump::setReservoirRemaining(uint8_t index, float ml) {
+  if (index >= PUMP_COUNT) return;
+  if (ml < 0) ml = 0;
+  _reservoirRemaining[index] = ml;
+  if (_pumps[index].capacity > 0) {
+    _pumps[index].reservoirLevel =
+        (uint8_t)constrain((ml / _pumps[index].capacity) * 100.0f, 0, 100);
+  }
+}
+
+void Pump::refillAll() {
+  for (uint8_t i = 0; i < PUMP_COUNT; i++) {
+    _reservoirRemaining[i] = _pumps[i].capacity;
+    _pumps[i].reservoirLevel = 100;
+  }
+  Logger::info(F("All reservoirs refilled"));
 }
 
 void Pump::resetTotal(uint8_t index) {

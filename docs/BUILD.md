@@ -22,6 +22,11 @@ ESP32-S3 based multi-channel dosing pump controller with a professional web dash
 
 Extend `defaultPins[]` and `PIN_PUMP_X` defines for >4 pumps.
 
+## Software Requirements
+
+- Arduino ESP32 core (`esp32:esp32`)
+- **ArduinoJson** library (required for config restore) — `arduino-cli lib install ArduinoJson`
+
 ## Software Architecture
 
 ```
@@ -63,7 +68,8 @@ Served at `http://<esp32-ip>/`. Features:
 - **Reservoirs** - level bars matching pump count, inline name edit
 - **Recent Activity** - live log feed from ESP32
 - **Daily Usage** - bar chart placeholder
-- **Quick Actions** - Dose All, E-Stop, Prime All, Reboot, Sync NTP, Set Time
+- **Quick Actions** - Dose All, E-Stop, Prime All, Reboot, Sync NTP, Backup, Restore
+- **Config Backup/Restore** - download full settings (pumps, schedules, Apex, timezone) as JSON; upload a backup to restore after reflashing
 - **Clock** - live 12-hour client-side clock
 - **Timezone Selector** - 17 timezones, default PST
 - **Dark/Light Theme** - toggle with persistent state
@@ -73,7 +79,7 @@ Served at `http://<esp32-ip>/`. Features:
 | Route | Method | Description |
 |-------|--------|-------------|
 | `/` | GET | Dashboard HTML |
-| `/api?path=status` | GET | `{uptime, totalDoses, totalVolume, freeHeap, rssi, wifiConnected, ip}` |
+| `/api?path=status` | GET | `{uptime, totalDoses, totalVolume, freeHeap, rssi, wifiConnected, tzOffsetMin, clockSynced, deviceTime, ip}` |
 | `/api?path=pumps` | GET | `[{index, name, rate, active, totalDosed, runTimeSec, state, pin}]` |
 | `/api?path=schedules` | GET | `[{index, pumpIndex, hour, minute, doseML, enabled, days}]` |
 | `/api?path=logs` | GET | `["[T] [L] msg", ...]` |
@@ -85,7 +91,12 @@ Served at `http://<esp32-ip>/`. Features:
 | `/api/schedule?pump=X&hour=H&minute=M&vol=V&days=D` | GET | Add schedule |
 | `/api/schedule/remove?index=X` | GET | Remove schedule |
 | `/api/reset` | GET | Reset all totals |
+| `/api/refill` | GET | Reset all reservoirs to 100% |
+| `/api/apex?unit=0&ip=...&enabled=true&probeMask=15` | GET | Save Apex config |
+| `/api/config/export` | GET | Download config backup JSON |
+| `/api/config/import` | POST | Restore config from JSON body |
 | `/api/ntp` | GET | Trigger NTP sync |
+| `/api/timezone?min=-480` | GET | Set timezone offset (minutes) |
 
 State codes: `0=Idle, 1=Priming, 2=Dosing, 3=Complete, 4=Error`
 
@@ -138,4 +149,5 @@ Pro-Simple/
 - WiFi AP mode at `192.168.4.1` if station connection fails (password: `config123`)
 - Dashboard uses system font stack (no external resources)
 - Polling interval: 5 seconds (dashboard JS)
-- Clock is client-side only; timezone selector is cosmetic
+- Clock is client-side only; timezone selector persists to device (`/api/timezone`) and drives NTP-based scheduling
+- Time synced via NTP on boot + `/api/ntp`; no manual time setting

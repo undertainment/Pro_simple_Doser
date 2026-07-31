@@ -15,6 +15,7 @@ public:
 
   static void getPumpConfig(uint8_t index, PumpConfig& cfg);
   static void setPumpConfig(uint8_t index, const PumpConfig& cfg);
+  static void markDirty();
   static uint8_t getScheduleCount();
   static void getSchedule(uint8_t index, Schedule& sched);
   static void setSchedule(uint8_t index, const Schedule& sched);
