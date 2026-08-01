@@ -4,6 +4,12 @@
 #include <Arduino.h>
 
 // =====================================================
+// Firmware Version
+// =====================================================
+#define FW_VERSION          "1.0.0"
+#define FW_NAME             "Pro-Simple"
+
+// =====================================================
 // WiFi — include wifi_config.h (not tracked by git)
 //       Copy wifi_config.example.h → wifi_config.h and edit
 // =====================================================

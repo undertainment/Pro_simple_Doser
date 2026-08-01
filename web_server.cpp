@@ -738,7 +738,7 @@ tr.disabled td .pump-name{border-color:transparent!important;cursor:default}
 <div class="app">
   <div class="top-bar">
     <div class="brand">
-      <h1>PRO-SIMPLE <span>| DOSING CONTROLLER</span></h1>
+      <h1>PRO-SIMPLE <span>| DOSING CONTROLLER</span> <small style="font-size:.5em;color:var(--text4);font-weight:400">v1.0.0</small></h1>
       <div class="tag"><span class="hmi-led on" id="onlineDot"></span> <span id="onlineLabel">Online</span> &middot; <span id="ipDisplay">--</span></div>
     </div>
     <div class="user-info">
